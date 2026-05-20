@@ -299,6 +299,7 @@
     padding:2px 6px;font-size:11px;color:var(--fg-dim);border-radius:3px}
   td.actual button.punch-btn:hover{border-color:var(--accent);color:var(--accent)}
   td.actual.punched{color:var(--accent)}
+  td.actual.mark-est span:first-child{font-style:italic;opacity:.8}
   td.actual .clear-x{cursor:pointer;color:var(--bad);margin-left:4px;font-weight:bold}
   .stop-marker{display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle}
   .progress-track{height:6px;background:var(--panel-2);border-radius:3px;overflow:hidden;margin:4px 0;position:relative}
@@ -3011,6 +3012,7 @@
   const $ = id => document.getElementById(id);
   let curIdx = 0, march = null, curGrp = '';
   let punches = {};
+  let markSource = {};  // markSource[tickKey()][idx] = 'manual' | 'gps' | 'est'
   let liveMode = true;
   let manualOffsetMs = 0;
   let ticker = null;
@@ -3042,6 +3044,8 @@
   }
   function loadPunches(){try{punches=JSON.parse(localStorage.getItem(PUNCH_KEY)||'{}')}catch(e){punches={}}}
   function savePunches(){try{localStorage.setItem(PUNCH_KEY,JSON.stringify(punches))}catch(e){}}
+  function loadMarkSource(){try{markSource=JSON.parse(localStorage.getItem('ebula_marksrc_v1')||'{}')}catch(e){markSource={}}}
+  function saveMarkSource(){try{localStorage.setItem('ebula_marksrc_v1',JSON.stringify(markSource))}catch(e){}}
   function loadPrefs(){try{
     const p=JSON.parse(localStorage.getItem(STORAGE)||'{}');
     if(typeof p.idx==='number')curIdx=p.idx;
@@ -3254,9 +3258,11 @@
       const p = trPunches[idx];
       if(p){
         td.classList.add('punched');
-        td.innerHTML = `<span>${p}</span><span class="clear-x" title="Borrar">×</span>`;
+        const est = ((markSource[key]||{})[idx]) === 'est';
+        td.classList.toggle('mark-est', est);
+        td.innerHTML = `<span>${est?'~':''}${p}</span><span class="clear-x" title="Borrar">×</span>`;
       } else {
-        td.classList.remove('punched');
+        td.classList.remove('punched','mark-est');
         td.innerHTML = '<button class="punch-btn">marcar</button>';
       }
     });
@@ -3389,19 +3395,28 @@
     const t = liveMode ? nowMin() : manualOffsetMs;
     const h = Math.floor(t/60)%24, m = Math.floor(t%60);
     punches[key][idx] = pad(h)+':'+pad(m);
+    if(!markSource[key]) markSource[key]={};
+    markSource[key][idx] = 'manual';
     savePunches();
+    saveMarkSource();
     applyPunches();
     window._suppressAutoScroll = false;
     updatePosition();
   }
   function clearPunch(idx){
     const key = tickKey();
-    if(punches[key] && punches[key][idx]!=null){delete punches[key][idx];savePunches();applyPunches();updatePosition()}
+    if(punches[key] && punches[key][idx]!=null){
+      delete punches[key][idx];
+      if(markSource[key]) delete markSource[key][idx];
+      savePunches();saveMarkSource();applyPunches();updatePosition();
+    }
   }
   function clearAllPunches(){
     if(!confirm('¿Borrar TODOS los pasos marcados de ESTE tren?')) return;
     delete punches[tickKey()];
+    delete markSource[tickKey()];
     savePunches();
+    saveMarkSource();
     applyPunches();
     updatePosition();
   }
@@ -4005,6 +4020,7 @@
     $('train').addEventListener('change',e=>{
       curIdx=+e.target.value; renderHeader(); renderRows(); updatePosition(); savePrefs();
       if(mapInitialized){ drawRoute(); updateMapTrains(); fitMapToRoute(); }
+      if(window.HTIryo && window.HTIryo._dispatchMarchaChange) window.HTIryo._dispatchMarchaChange();
     });
     $('reset-punches').onclick=clearAllPunches;
     const pdfBtn = $('download-pdf');
@@ -4085,6 +4101,7 @@
 
   // init
   loadPunches();
+  loadMarkSource();
   loadPrefs();
   loadTheme();
   buildAllMarchas();
@@ -4099,6 +4116,33 @@
   renderRows();
   bind();
   bindTheme();
+  // ---- API de integración para el módulo de seguimiento GPS (gps-tracking.js) ----
+  // Expone SOLO lo imprescindible; toda la lógica GPS vive en el archivo aparte.
+  (function(){
+    const marchaCbs = [];
+    window.HTIryo = {
+      getMarch: function(){ return march; },
+      COORDS: COORDS,
+      LINES: LINES,
+      getPath: getPath,
+      snapToPolyline: snapToPolyline,
+      nowMin: nowMin,
+      getTickKey: tickKey,
+      getMark: function(idx){ return (punches[tickKey()]||{})[idx]; },
+      getMarkSource: function(idx){ return (markSource[tickKey()]||{})[idx]; },
+      setMark: function(idx, hhmm, source){
+        const k = tickKey();
+        if(!punches[k]) punches[k] = {};
+        if(!markSource[k]) markSource[k] = {};
+        punches[k][idx] = hhmm;
+        markSource[k][idx] = source || 'gps';
+        savePunches(); saveMarkSource();
+        applyPunches(); updatePosition();
+      },
+      onMarchaChange: function(cb){ if(typeof cb === 'function') marchaCbs.push(cb); },
+      _dispatchMarchaChange: function(){ marchaCbs.forEach(function(cb){ try{ cb(); }catch(e){} }); }
+    };
+  })();
   // Detectar pestaña activa inicial y marcar body
   const initialActiveTab = document.querySelector('.tab.active');
   if(initialActiveTab) document.body.classList.add('tab-' + initialActiveTab.dataset.tab);
@@ -4575,5 +4619,6 @@ renderLTVList();
 })();
 
 </script>
+<script src="gps-tracking.js"></script>
 </body>
 </html>
