@@ -398,6 +398,9 @@
   });
 
   // ===== Inicio ==============================================================
+  // El horario consulta esto para no extrapolar la posición por reloj cuando
+  // el seguimiento GPS está activo.
+  API.isTracking = function(){ return tracking; };
   buildUI();
   checkDeparture();
   armTimer = setInterval(checkDeparture, 20000);

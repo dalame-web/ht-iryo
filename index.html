@@ -3317,6 +3317,14 @@
     } else if(prevIdx>=0){ activeIdx = prevIdx; }
     else if(nextIdx>=0){ activeIdx = nextIdx; }
     if(lp>=0 && activeIdx<lp) activeIdx = lp;
+    // Con el seguimiento GPS activo, la posición la manda la ÚLTIMA MARCA REAL:
+    // no se extrapola por reloj (la app no impone una estimación de posición).
+    if(window.HTIryo && window.HTIryo.isTracking && window.HTIryo.isTracking()){
+      activeIdx = (lp>=0) ? lp : 0;
+      prevIdx = activeIdx;
+      nextIdx = -1;
+      for(let j=activeIdx+1;j<stops.length;j++){ if(stops[j].tm!=null){ nextIdx=j; break; } }
+    }
 
     // Remove now-merged class from all merged cells
     document.querySelectorAll('#rows td.merged.now-merged').forEach(td=>td.classList.remove('now-merged'));
