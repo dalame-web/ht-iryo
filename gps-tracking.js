@@ -32,6 +32,8 @@
   var wakeLock   = null;
   var hadHidden  = false;
   var el = {};
+  // Modo prueba: ignora la ventana horaria para poder verificar el GPS a cualquier hora.
+  var testMode = (function(){ try{ return localStorage.getItem('ebula_gps_testmode') === '1'; }catch(e){ return false; } })();
 
   /* ===== Capa de geolocalización aislada =====================================
    * Para migrar a Capacitor en el futuro, basta sustituir este objeto por una
@@ -176,7 +178,7 @@
     var nowM = normNow(eff);
 
     if(!windowOpen){
-      if(nowM >= eff - LEAD_MIN){ windowOpen = true; gpsFailCount = 0; }
+      if(testMode || nowM >= eff - LEAD_MIN){ windowOpen = true; gpsFailCount = 0; }
       else { setStatus('Esperando ' + name + ' · ventana ~' + fmtHM(eff - LEAD_MIN)); return; }
     }
 
@@ -197,7 +199,10 @@
       if(!tracking) return;
       gpsFailCount++;
       var eff2 = effTime(gpsNextIdx);
-      if(normNow(eff2) >= eff2 + GIVEUP_MIN){
+      // En modo prueba se da por vencida la ventana tras 2 fallos seguidos
+      // (sin reloj fiable); en uso normal, al superar la hora efectiva + margen.
+      var giveUp = testMode ? (gpsFailCount >= 2) : (normNow(eff2) >= eff2 + GIVEUP_MIN);
+      if(giveUp){
         estimateMark(gpsNextIdx);
       } else {
         setStatus('Sin señal GPS cerca de ' + name + '…', 'warn');
@@ -286,6 +291,9 @@
       '#gps-btn.armed{background:#0d2818;border-color:#3fb950;color:#3fb950;' +
         'animation:gpsPulse 1.6s infinite}' +
       '#gps-action{background:#0d2818;border-color:#3fb950;color:#3fb950}' +
+      '#gps-test{display:flex;align-items:center;gap:3px;cursor:pointer;' +
+        'color:var(--fg-dim,#9ba3ad);font-size:11px;white-space:nowrap}' +
+      '#gps-test input{margin:0;cursor:pointer}' +
       '@keyframes gpsPulse{0%,100%{opacity:1}50%{opacity:.5}}';
     document.head.appendChild(st);
 
@@ -293,6 +301,8 @@
     bar.id = 'gps-bar';
     bar.innerHTML =
       '<span id="gps-status">Seguimiento GPS inactivo</span>' +
+      '<label id="gps-test" title="Ignora la ventana horaria — para probar a cualquier hora">' +
+        '<input type="checkbox" id="gps-test-cb"> prueba</label>' +
       '<button id="gps-action" hidden type="button"></button>' +
       '<button id="gps-btn" type="button">▶ Iniciar seguimiento GPS</button>';
     document.body.appendChild(bar);
@@ -301,6 +311,15 @@
     el.status = bar.querySelector('#gps-status');
     el.action = bar.querySelector('#gps-action');
     el.btn    = bar.querySelector('#gps-btn');
+    el.testCb = bar.querySelector('#gps-test-cb');
+
+    el.testCb.checked = testMode;
+    el.testCb.addEventListener('change', function(){
+      testMode = el.testCb.checked;
+      try{ localStorage.setItem('ebula_gps_testmode', testMode ? '1' : '0'); }catch(e){}
+      setStatus(testMode ? 'Modo prueba activo — ventana horaria ignorada'
+                         : 'Modo prueba desactivado', testMode ? 'warn' : '');
+    });
 
     el.btn.addEventListener('click', function(){
       if(tracking) stopTracking(); else startTracking();
