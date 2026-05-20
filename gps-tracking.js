@@ -274,6 +274,9 @@
   function buildUI(){
     var st = document.createElement('style');
     st.textContent =
+      // Hueco inferior para que la última estación pueda subir por encima
+      // de la barra GPS al hacer scroll (la barra es fija y la taparía).
+      '#schedule-pane{padding-bottom:72px}' +
       '#gps-bar{position:fixed;left:10px;bottom:10px;z-index:950;display:none;' +
         'align-items:center;gap:8px;max-width:min(92vw,540px);' +
         'background:var(--panel,#161b22);border:1px solid var(--border,#30363d);' +
