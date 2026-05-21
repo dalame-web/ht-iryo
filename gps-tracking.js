@@ -179,25 +179,25 @@
 
     if(!windowOpen){
       if(testMode || nowM >= eff - LEAD_MIN){ windowOpen = true; gpsFailCount = 0; }
-      else { setStatus('Esperando ' + name + ' · ventana ~' + fmtHM(eff - LEAD_MIN)); return; }
+      else { setStatus('Próxima estación: ' + name + ' · hora prevista ' + fmtHM(eff)); return; }
     }
 
     // Ventana abierta → consultar el GPS
     GeoSource.getCurrent().then(function(pos){
       if(!tracking) return;
       gpsFailCount = 0;
+      setCoords(pos);
       var pr = projectGps(pos.lat, pos.lng);
       if(!pr){ setStatus('GPS fuera de la ruta — ¿tren correcto?', 'warn'); return; }
       if(pr.passedOrigIdx != null && pr.passedOrigIdx >= gpsNextIdx){
         autoMark(gpsNextIdx, pr.passedOrigIdx > gpsNextIdx);
       } else {
-        var late = nowM - eff;
-        if(late > 0.5) setStatus('Esperando paso por ' + name + ' · +' + fmtDur(late) + ' retraso', 'warn');
-        else setStatus('En ruta hacia ' + name);
+        setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(eff) + ')');
       }
     }).catch(function(){
       if(!tracking) return;
       gpsFailCount++;
+      setNoSignal();
       var eff2 = effTime(gpsNextIdx);
       // En modo prueba se da por vencida la ventana tras 2 fallos seguidos
       // (sin reloj fiable); en uso normal, al superar la hora efectiva + margen.
@@ -235,6 +235,7 @@
     if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     releaseWakeLock();
     hideAction();
+    clearCoords();
     setStatus('Seguimiento detenido');
     updateButton(); updateBarVisibility();
   }
@@ -276,18 +277,20 @@
     st.textContent =
       // Hueco inferior para que la última estación pueda subir por encima
       // de la barra GPS al hacer scroll (la barra es fija y la taparía).
-      '#schedule-pane{padding-bottom:72px}' +
+      '#schedule-pane{padding-bottom:96px}' +
       '#gps-bar{position:fixed;left:10px;bottom:10px;z-index:950;display:none;' +
-        'align-items:center;gap:8px;max-width:min(92vw,540px);' +
+        'flex-direction:column;gap:4px;max-width:min(92vw,540px);width:min(92vw,540px);' +
         'background:var(--panel,#161b22);border:1px solid var(--border,#30363d);' +
-        'border-radius:8px;padding:6px 10px;box-shadow:0 4px 16px rgba(0,0,0,.45);' +
+        'border-radius:8px;padding:8px 10px;box-shadow:0 4px 16px rgba(0,0,0,.45);' +
         'font-family:Inter,sans-serif;font-size:12px}' +
       '#gps-bar.visible{display:flex}' +
-      '#gps-status{color:var(--fg-dim,#9ba3ad);white-space:nowrap;overflow:hidden;' +
-        'text-overflow:ellipsis;flex:1;min-width:0}' +
+      '#gps-status{color:var(--fg-dim,#9ba3ad);white-space:normal;width:100%}' +
       '#gps-status.warn{color:var(--warn,#f0883e)}' +
       '#gps-status.ok{color:var(--ok,#3fb950)}' +
-      '#gps-bar button{cursor:pointer;border-radius:5px;padding:5px 9px;font-size:12px;' +
+      '#gps-coords{font-size:11px;opacity:.55;font-family:monospace;min-height:13px;' +
+        'width:100%;word-break:break-all}' +
+      '#gps-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}' +
+      '#gps-controls button{cursor:pointer;border-radius:5px;padding:5px 9px;font-size:12px;' +
         'font-weight:600;font-family:inherit;border:1px solid var(--border,#30363d);' +
         'background:var(--panel-2,#1f242c);color:var(--fg,#e6edf3);white-space:nowrap}' +
       '#gps-btn.tracking{background:#3a1d1d;border-color:#f85149;color:#f85149}' +
@@ -304,14 +307,18 @@
     bar.id = 'gps-bar';
     bar.innerHTML =
       '<span id="gps-status">Seguimiento GPS inactivo</span>' +
-      '<label id="gps-test" title="Ignora la ventana horaria — para probar a cualquier hora">' +
-        '<input type="checkbox" id="gps-test-cb"> prueba</label>' +
-      '<button id="gps-action" hidden type="button"></button>' +
-      '<button id="gps-btn" type="button">▶ Iniciar seguimiento GPS</button>';
+      '<div id="gps-coords"></div>' +
+      '<div id="gps-controls">' +
+        '<label id="gps-test" title="Ignora la ventana horaria — para probar a cualquier hora">' +
+          '<input type="checkbox" id="gps-test-cb"> prueba</label>' +
+        '<button id="gps-action" hidden type="button"></button>' +
+        '<button id="gps-btn" type="button">▶ Iniciar GPS</button>' +
+      '</div>';
     document.body.appendChild(bar);
 
     el.bar    = bar;
     el.status = bar.querySelector('#gps-status');
+    el.coords = bar.querySelector('#gps-coords');
     el.action = bar.querySelector('#gps-action');
     el.btn    = bar.querySelector('#gps-btn');
     el.testCb = bar.querySelector('#gps-test-cb');
@@ -345,6 +352,21 @@
     if(!el.action) return;
     el.action.hidden = true;
     el.action.onclick = null;
+  }
+
+  function fmtTime(){ return new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+
+  function setCoords(pos){
+    if(!el.coords) return;
+    el.coords.textContent = '📍 ' + pos.lat.toFixed(5) + ', ' + pos.lng.toFixed(5) + '  ±' + Math.round(pos.accuracy) + ' m  ' + fmtTime();
+  }
+  function setNoSignal(){
+    if(!el.coords) return;
+    el.coords.textContent = '⚠️ Sin señal GPS  ' + fmtTime();
+  }
+  function clearCoords(){
+    if(!el.coords) return;
+    el.coords.textContent = '';
   }
 
   function updateButton(){
