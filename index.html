@@ -215,6 +215,14 @@
   button.pdf-btn:disabled{opacity:.5;cursor:not-allowed}
   body.light button.pdf-btn{background:rgba(232,32,28,.08);color:#b91c1c;border-color:#e8201c}
   body.light button.pdf-btn:hover{background:#e8201c;color:#fff}
+  button.gps-btn{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+    background:rgba(63,185,80,.14);border:1px solid var(--ok);color:var(--ok);
+    border-radius:5px;font-size:12px;font-weight:600;letter-spacing:.3px;white-space:nowrap}
+  button.gps-btn:hover{background:var(--ok);color:#0d1117}
+  button.gps-btn.tracking{background:#3a1d1d;border-color:var(--bad);color:var(--bad)}
+  button.gps-btn.tracking:hover{background:var(--bad);color:#fff}
+  button.gps-btn.armed{background:rgba(63,185,80,.22);animation:gpsPulse 1.6s infinite}
+  @keyframes gpsPulse{0%,100%{opacity:1}50%{opacity:.5}}
   .info-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;
     padding:4px 0;font-size:13px}
   .badge{background:var(--panel-2);border:1px solid var(--border);
@@ -318,9 +326,13 @@
   .position-info-box{padding:6px 12px;border:2px solid #ffd400;border-radius:6px;
     background:rgba(255,212,0,.18);
     color:#ffe066!important;font-weight:600;
-    font-size:13px!important;box-shadow:0 0 8px rgba(255,212,0,.25)}
-  .position-info-box:empty{display:none}
+    font-size:13px!important;box-shadow:0 0 8px rgba(255,212,0,.25);
+    flex-direction:column;gap:2px}
   .position-info-box b{color:#fff7c2;font-weight:800}
+  #gps-subline{font-size:11px!important;font-weight:500;line-height:1.35}
+  #gps-subline.warn{color:#ffd9b0}
+  #gps-subline.ok{color:#b9f0c4}
+  #gps-subline .gps-act{text-decoration:underline;cursor:pointer;color:#fff}
   /* ADIF — paneles de salidas/llegadas */
   #adif-pane{padding:0}
   .adif-content{max-width:1200px;margin:0 auto;padding:24px;box-sizing:border-box;width:100%}
@@ -1352,13 +1364,17 @@
       </svg>
       PDF
     </button>
+    <button id="gps-btn" type="button" class="gps-btn" style="margin-left:auto" title="Iniciar/parar el seguimiento GPS de la marcha">▶ Iniciar seguimiento GPS</button>
   </div>
   <div class="info-row">
     <span id="route" class="badge big" style="font-weight:600"></span>
     <span class="sub">Tipo: <b id="tipo">—</b></span>
     <span class="sub">Salida: <b id="dep">—</b> · Llegada: <b id="arr">—</b></span>
     <span style="flex:1"></span>
-    <span class="sub position-info-box" id="position-info"></span>
+    <span class="sub position-info-box" id="position-box" style="display:none">
+      <span id="position-info"></span>
+      <span id="gps-subline"></span>
+    </span>
   </div>
   <div class="ctrl-row">
     <span class="ctrl-grp">
@@ -3394,6 +3410,17 @@
         }
       }
     }
+    refreshPositionBox();
+  }
+
+  // Muestra/oculta el recuadro de posición según tengan contenido la línea
+  // principal (#position-info) o la sublínea GPS (#gps-subline).
+  function refreshPositionBox(){
+    var box = $('position-box'); if(!box) return;
+    var pi = $('position-info'), gs = $('gps-subline');
+    var has = (pi && pi.textContent.trim()) || (gs && gs.textContent.trim());
+    box.style.display = has ? 'flex' : 'none';
+    updateHeaderOffset();
   }
 
   // ---- punches ----
@@ -4136,6 +4163,7 @@
       snapToPolyline: snapToPolyline,
       nowMin: nowMin,
       getTickKey: tickKey,
+      refreshPositionBox: refreshPositionBox,
       getMark: function(idx){ return (punches[tickKey()]||{})[idx]; },
       getMarkSource: function(idx){ return (markSource[tickKey()]||{})[idx]; },
       setMark: function(idx, hhmm, source){
