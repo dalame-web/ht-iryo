@@ -15,7 +15,7 @@
   if(!API){ console.warn('[GPS] API HTIryo no disponible — módulo desactivado'); return; }
 
   // ---- Parámetros ----
-  var POLL_MS    = 15000;  // cada cuánto se ejecuta el ciclo (solo consulta GPS con ventana abierta)
+  var POLL_MS    = 30000;  // cada cuánto se ejecuta el ciclo (solo consulta GPS con ventana abierta)
   var LEAD_MIN   = 2;      // minutos antes de la hora efectiva en que se abre la ventana
   var GIVEUP_MIN = 3;      // minutos tras la hora efectiva sin señal → rellenar con estimada
   var OFF_ROUTE  = 1e-3;   // umbral de "fuera de ruta" (distancia² en grados; ~3 km)
