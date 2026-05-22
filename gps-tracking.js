@@ -189,7 +189,17 @@
       if(pr.passedOrigIdx != null && pr.passedOrigIdx >= gpsNextIdx){
         autoMark(gpsNextIdx, pr.passedOrigIdx > gpsNextIdx);
       } else {
-        setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(eff) + ')');
+        // Mejora 1: el GPS confirma que el tren aún no ha llegado a la estación.
+        // Si ya pasó su hora prevista, el retraso real crece; se recalcula y se
+        // publica como retraso provisional (lo sustituirá la marca real al pasar).
+        if(nowM > eff + 0.5){
+          var prov = currentDelta() + (nowM - eff);
+          API.setProvisionalDelay(prov);
+          setStatus('Retraso creciendo: +' + fmtDur(prov) + ' · sin pasar aún ' + name, 'warn');
+        } else {
+          API.setProvisionalDelay(null);
+          setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(eff) + ')');
+        }
       }
     }).catch(function(){
       if(!tracking) return;
@@ -230,6 +240,7 @@
     if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     releaseWakeLock();
     hideAction();
+    if(API.setProvisionalDelay) API.setProvisionalDelay(null);
     setStatus('Seguimiento detenido');
     updateButton();
   }
@@ -344,6 +355,7 @@
     if(tracking) stopTracking();
     windowOpen = false; gpsNextIdx = -1; armed = false;
     hideAction();
+    if(API.setProvisionalDelay) API.setProvisionalDelay(null);
     setStatus('Seguimiento GPS inactivo');
     checkDeparture();
   });

@@ -3261,6 +3261,9 @@
 
   function escapeHtml(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
+  // Mejora 1: retraso provisional (minutos) confirmado por GPS sin marca aún.
+  // Lo fija gps-tracking.js vía HTIryo.setProvisionalDelay; lo lee updatePosition.
+  let provisionalDelay = null;
   function tickKey(){return curGrp+'|'+march.t+'|'+march.o+'→'+march.d}
 
   function applyPunches(){
@@ -3383,17 +3386,25 @@
       $('position-info').textContent='';
     }
 
-    // Δ marcha: SOLO se calcula a partir de los marcajes del usuario en la columna "Real".
-    // Si el usuario no ha marcado ninguna parada todavía, mostramos ±0:00 (sin retraso ni adelanto).
+    // Δ marcha: se calcula a partir de los marcajes del usuario en la columna "Real".
+    // Mejora 1: si el GPS confirma un retraso provisional mayor (tren aún sin llegar
+    // a la siguiente estación pasada su hora prevista), ese valor manda y se marca
+    // con "~" para indicar que es provisional, no una marca real.
     let deltaSec = null;
+    let provisional = false;
     if(lp >= 0){
       deltaSec = delayMin * 60;
     }
+    if(provisionalDelay != null){
+      const provSec = provisionalDelay * 60;
+      if(deltaSec == null || provSec > deltaSec){ deltaSec = provSec; provisional = true; }
+    }
     const dEl = $('delta');
+    const pfx = provisional ? '~' : '';
     if(deltaSec == null){dEl.className='delta ontime';dEl.textContent='±0:00'}
     else if(Math.abs(deltaSec) < 30){dEl.className='delta ontime';dEl.textContent='±0:00'}
-    else if(deltaSec < 0){dEl.className='delta early';dEl.textContent=fmtDelta(deltaSec)+' adelanto'}
-    else{dEl.className='delta late';dEl.textContent=fmtDelta(deltaSec)+' retraso'}
+    else if(deltaSec < 0){dEl.className='delta early';dEl.textContent=pfx+fmtDelta(deltaSec)+' adelanto'}
+    else{dEl.className='delta late';dEl.textContent=pfx+fmtDelta(deltaSec)+' retraso'}
 
     const total = stops.length;
     const passed = (activeIdx>=0?activeIdx:0);
@@ -3432,6 +3443,7 @@
     punches[key][idx] = pad(h)+':'+pad(m);
     if(!markSource[key]) markSource[key]={};
     markSource[key][idx] = 'manual';
+    provisionalDelay = null;
     savePunches();
     saveMarkSource();
     applyPunches();
@@ -3443,6 +3455,7 @@
     if(punches[key] && punches[key][idx]!=null){
       delete punches[key][idx];
       if(markSource[key]) delete markSource[key][idx];
+      provisionalDelay = null;
       savePunches();saveMarkSource();applyPunches();updatePosition();
     }
   }
@@ -3450,6 +3463,7 @@
     if(!confirm('¿Borrar TODOS los pasos marcados de ESTE tren?')) return;
     delete punches[tickKey()];
     delete markSource[tickKey()];
+    provisionalDelay = null;
     savePunches();
     saveMarkSource();
     applyPunches();
@@ -4164,6 +4178,7 @@
       nowMin: nowMin,
       getTickKey: tickKey,
       refreshPositionBox: refreshPositionBox,
+      setProvisionalDelay: function(min){ provisionalDelay = (min == null ? null : min); updatePosition(); },
       getMark: function(idx){ return (punches[tickKey()]||{})[idx]; },
       getMarkSource: function(idx){ return (markSource[tickKey()]||{})[idx]; },
       setMark: function(idx, hhmm, source){
@@ -4172,6 +4187,7 @@
         if(!markSource[k]) markSource[k] = {};
         punches[k][idx] = hhmm;
         markSource[k][idx] = source || 'gps';
+        provisionalDelay = null;
         savePunches(); saveMarkSource();
         applyPunches(); updatePosition();
       },
