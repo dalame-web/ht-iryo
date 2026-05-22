@@ -3449,6 +3449,9 @@
     applyPunches();
     window._suppressAutoScroll = false;
     updatePosition();
+    if(window.HTIryo && window.HTIryo.logManualMark && window.HTIryo.isTracking && window.HTIryo.isTracking()){
+      window.HTIryo.logManualMark(idx);
+    }
   }
   function clearPunch(idx){
     const key = tickKey();

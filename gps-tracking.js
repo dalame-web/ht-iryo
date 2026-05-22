@@ -141,6 +141,7 @@
   function autoMark(idx, skipped){
     // Conflicto: la estación ya tiene marca manual → conservarla y avisar.
     if(API.getMark(idx) != null && API.getMarkSource(idx) === 'manual'){
+      logEvent('conflicto', stName(idx) + ' — marca manual ' + API.getMark(idx) + ' conservada');
       setStatus('Conflicto en ' + stName(idx) + ': marca manual ' + API.getMark(idx) + ' conservada', 'warn');
       windowOpen = false;
       return;
@@ -149,6 +150,7 @@
     var now = API.nowMin();
     var hhmm = pad(Math.floor(now/60) % 24) + ':' + pad(Math.floor(now % 60));
     API.setMark(idx, hhmm, 'gps');
+    logEvent('paso', stName(idx) + ' ' + hhmm + ' · GPS');
     setStatus('✓ ' + stName(idx) + ' ' + hhmm + ' (GPS)', 'ok');
     windowOpen = false;
     recomputeNext();
@@ -159,6 +161,7 @@
     var eff = m.s[idx].tm + currentDelta();
     var hhmm = fmtHM(eff);
     API.setMark(idx, hhmm, 'est');
+    logEvent('paso', stName(idx) + ' ' + hhmm + ' · estimada (sin GPS)');
     setStatus('~ ' + stName(idx) + ' ' + hhmm + ' (estimada, sin GPS)', 'warn');
     windowOpen = false;
     gpsFailCount = 0;
@@ -185,7 +188,7 @@
       if(!tracking) return;
       gpsFailCount = 0;
       var pr = projectGps(pos.lat, pos.lng);
-      if(!pr){ setStatus('GPS fuera de la ruta — ¿tren correcto?', 'warn'); return; }
+      if(!pr){ logEvent('fuera_ruta', 'GPS fuera de la ruta', 'fuera'); setStatus('GPS fuera de la ruta — ¿tren correcto?', 'warn'); return; }
       if(pr.passedOrigIdx != null && pr.passedOrigIdx >= gpsNextIdx){
         autoMark(gpsNextIdx, pr.passedOrigIdx > gpsNextIdx);
       } else {
@@ -195,6 +198,7 @@
         if(nowM > eff + 0.5){
           var prov = currentDelta() + (nowM - eff);
           API.setProvisionalDelay(prov);
+          logEvent('retraso', '+' + Math.round(prov) + ' min provisional hacia ' + name, 'retraso' + Math.round(prov));
           setStatus('Retraso creciendo: +' + fmtDur(prov) + ' · sin pasar aún ' + name, 'warn');
         } else {
           API.setProvisionalDelay(null);
@@ -210,6 +214,7 @@
       if(giveUp){
         estimateMark(gpsNextIdx);
       } else {
+        logEvent('sin_senal', 'Sin señal cerca de ' + name, 'sinsenal');
         setStatus('Sin señal GPS cerca de ' + name + '…', 'warn');
       }
     });
@@ -222,6 +227,7 @@
     if(!m){ setStatus('No hay marcha seleccionada', 'warn'); return; }
     tracking = true; windowOpen = false; gpsFailCount = 0; armed = false;
     recomputeNext();
+    logEvent('inicio', 'Seguimiento iniciado · ' + (m.t || '') + ' ' + (m.o || '') + '→' + (m.d || ''));
     requestWakeLock();
     // Sonda de permiso dentro del gesto del usuario.
     GeoSource.getCurrent().then(function(){
@@ -236,6 +242,7 @@
   }
 
   function stopTracking(){
+    if(tracking) logEvent('fin', 'Seguimiento detenido');
     tracking = false; windowOpen = false;
     if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
     releaseWakeLock();
@@ -318,6 +325,30 @@
 
   function fmtTime(){ return new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
 
+  // ===== Registro automático del recorrido (Mejora 2) ========================
+  // Se graba solo, sin botones, mientras el seguimiento está activo: una entrada
+  // por cada marca y por cada evento, en localStorage['ebula_gpslog_v1'],
+  // indexado por marcha (tickKey). Sin pantalla ni exportación (de momento).
+  var LOG_KEY = 'ebula_gpslog_v1';
+  var lastLogSig = '';
+  function logEvent(tipo, detalle, dedup){
+    try{
+      if(dedup){
+        var sig = tipo + '|' + dedup;
+        if(sig === lastLogSig) return;   // no repetir el mismo evento en cada sondeo
+        lastLogSig = sig;
+      } else {
+        lastLogSig = '';
+      }
+      var store = JSON.parse(localStorage.getItem(LOG_KEY) || '{}');
+      var key = (API.getTickKey && API.getTickKey()) || 'marcha';
+      if(!store[key]) store[key] = [];
+      store[key].push({ t: fmtTime(), tipo: tipo, detalle: detalle == null ? '' : String(detalle) });
+      if(store[key].length > 600) store[key] = store[key].slice(-600);
+      localStorage.setItem(LOG_KEY, JSON.stringify(store));
+    }catch(e){}
+  }
+
   function updateButton(){
     if(!el.btn) return;
     el.btn.classList.remove('tracking', 'armed');
@@ -340,8 +371,7 @@
       requestWakeLock();
       if(hadHidden){
         hadHidden = false;
-        setStatus('La app estuvo en segundo plano — el seguimiento pudo pausarse', 'warn');
-        showAction('Reactivar localización', function(){
+        showAction('⚠ En 2.º plano: el seguimiento pudo pausarse — toca para reactivar', function(){
           hideAction();
           requestWakeLock();
           pollTick();
@@ -364,6 +394,8 @@
   // El horario consulta esto para no extrapolar la posición por reloj cuando
   // el seguimiento GPS está activo.
   API.isTracking = function(){ return tracking; };
+  // Registra en el log una marca hecha a mano (la llama index.html desde punchAt).
+  API.logManualMark = function(idx){ logEvent('paso', stName(idx) + ' · manual'); };
   buildUI();
   checkDeparture();
   armTimer = setInterval(checkDeparture, 20000);
