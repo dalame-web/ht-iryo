@@ -321,10 +321,14 @@
     font-size:13px!important;box-shadow:0 0 8px rgba(255,212,0,.25);
     flex-direction:column;gap:2px}
   .position-info-box b{color:#fff7c2;font-weight:800}
-  #gps-subline{font-size:11px!important;font-weight:500;line-height:1.35}
-  #gps-subline.warn{color:#ffd9b0}
-  #gps-subline.ok{color:#b9f0c4}
+  #gps-subline{font-size:11px!important;font-weight:600;line-height:1.35;color:#fff}
+  #gps-subline.warn{color:#ffa657;background:rgba(240,136,62,.18);padding:1px 6px;border-radius:3px}
+  #gps-subline.ok{color:#7ee787;background:rgba(63,185,80,.18);padding:1px 6px;border-radius:3px}
   #gps-subline .gps-act{text-decoration:underline;cursor:pointer;color:#fff}
+  body.light #gps-subline{color:#1f2328}
+  body.light #gps-subline.warn{color:#b35900;background:rgba(240,136,62,.22)}
+  body.light #gps-subline.ok{color:#1a7f37;background:rgba(63,185,80,.22)}
+  body.light #gps-subline .gps-act{color:#0d1117}
   /* ADIF — paneles de salidas/llegadas */
   #adif-pane{padding:0}
   .adif-content{max-width:1200px;margin:0 auto;padding:24px;box-sizing:border-box;width:100%}
