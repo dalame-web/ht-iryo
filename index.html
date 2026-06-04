@@ -320,7 +320,10 @@
     padding:2px 6px;font-size:11px;color:var(--fg-dim);border-radius:3px}
   td.actual button.punch-btn:hover{border-color:var(--accent);color:var(--accent)}
   td.actual.punched{color:var(--accent)}
-  td.actual.mark-est span:first-child{font-style:italic;opacity:.8}
+  td.actual.mark-manual{color:var(--accent)}
+  td.actual.mark-gps{color:var(--ok)}
+  td.actual.mark-est{color:var(--warn)}
+  td.actual.mark-est span:first-child{font-style:italic;opacity:.85}
   td.actual .clear-x{cursor:pointer;color:var(--bad);margin-left:4px;font-weight:bold}
   .stop-marker{display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;vertical-align:middle}
   .progress-track{height:6px;background:var(--panel-2);border-radius:3px;overflow:hidden;margin:4px 0;position:relative}
@@ -3413,19 +3416,23 @@ window.addEventListener('unload', ebulaClearAllData);
   function applyPunches(){
     const key = tickKey();
     const trPunches = punches[key]||{};
+    const trSrc = markSource[key]||{};
     document.querySelectorAll('#rows td.actual').forEach(td=>{
-      // Filas CDI/BCE no tienen data-idx; marcadores km anónimos llevan data-no-mark
       if(!td.dataset.idx) return;
       if(td.dataset.noMark) return;
       const idx = +td.dataset.idx;
       const p = trPunches[idx];
       if(p){
         td.classList.add('punched');
-        const est = ((markSource[key]||{})[idx]) === 'est';
-        td.classList.toggle('mark-est', est);
-        td.innerHTML = `<span>${est?'~':''}${p}</span><span class="clear-x" title="Borrar">×</span>`;
+        const src = trSrc[idx];
+        td.classList.toggle('mark-est', src === 'est');
+        td.classList.toggle('mark-gps', src === 'gps');
+        td.classList.toggle('mark-manual', src === 'manual' || (!src));
+        // Prefijo visual por fuente: '~' estimada, '📡' GPS, '✋' manual.
+        const prefix = src === 'est' ? '~ ' : (src === 'gps' ? '📡 ' : '✋ ');
+        td.innerHTML = `<span>${prefix}${p}</span><span class="clear-x" title="Borrar">×</span>`;
       } else {
-        td.classList.remove('punched','mark-est');
+        td.classList.remove('punched','mark-est','mark-gps','mark-manual');
         td.innerHTML = '<button class="punch-btn">marcar</button>';
       }
     });
@@ -3534,7 +3541,9 @@ window.addEventListener('unload', ebulaClearAllData);
     if(lp >= 0){
       deltaSec = delayMin * 60;
     }
-    if(provisionalDelay != null){
+    // G4: provisional solo sustituye al delta si representa MÁS retraso real.
+    // Antes: provSec=0 sobrescribía un delta=-120 (adelanto) y mostraba ±0:00.
+    if(provisionalDelay != null && provisionalDelay > 0){
       const provSec = provisionalDelay * 60;
       if(deltaSec == null || provSec > deltaSec){ deltaSec = provSec; provisional = true; }
     }
@@ -4089,6 +4098,44 @@ window.addEventListener('unload', ebulaClearAllData);
       _dispatchMarchaChange: function(){ marchaCbs.forEach(function(cb){ try{ cb(); }catch(e){} }); }
     };
   })();
+
+  // Detección proactiva de permisos GPS — diagnóstico visible para el maquinista.
+  window.HTIryo.checkGpsPermission = function(){
+    return new Promise(function(resolve){
+      if(!navigator.permissions || !navigator.permissions.query){
+        resolve({state: 'unknown', supported: false});
+        return;
+      }
+      navigator.permissions.query({name: 'geolocation'}).then(function(p){
+        var info = {state: p.state, supported: true};
+        p.onchange = function(){
+          var subline = document.getElementById('gps-subline');
+          if(subline && !window.HTIryo.isTracking()){
+            subline.textContent = window.HTIryo._permLabel(p.state);
+            subline.className = (p.state === 'granted') ? 'ok' : 'warn';
+          }
+        };
+        resolve(info);
+      }).catch(function(){ resolve({state: 'unknown', supported: false}); });
+    });
+  };
+  window.HTIryo._permLabel = function(state){
+    if(state === 'granted') return '📍 Permiso GPS OK — pulsa para iniciar seguimiento';
+    if(state === 'denied') return '⚠ Permiso GPS denegado — revisa ajustes del navegador';
+    if(state === 'prompt') return '📍 GPS sin permiso aún (se pedirá al iniciar)';
+    return '';
+  };
+  setTimeout(function(){
+    if(!window.HTIryo.checkGpsPermission) return;
+    window.HTIryo.checkGpsPermission().then(function(r){
+      var subline = document.getElementById('gps-subline');
+      if(!subline) return;
+      if(r.supported && !window.HTIryo.isTracking()){
+        subline.textContent = window.HTIryo._permLabel(r.state);
+        subline.className = (r.state === 'granted') ? 'ok' : 'warn';
+      }
+    });
+  }, 800);
   // Detectar pestaña activa inicial y marcar body
   const initialActiveTab = document.querySelector('.tab.active');
   if(initialActiveTab) document.body.classList.add('tab-' + initialActiveTab.dataset.tab);

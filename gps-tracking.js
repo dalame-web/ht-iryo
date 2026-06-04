@@ -138,25 +138,39 @@
   }
 
   // ===== Registro de marcas ==================================================
+  // Filtro de precisión GPS (m). Por encima → no marca, espera mejor señal.
+  // 1500m es permisivo a propósito: un AVE a 300 km/h recorre 5 km/min,
+  // así que ±1.5 km son ~18 s de error → no afecta a la ventana de marca.
+  // Sólo rechaza posiciones realmente malas (Wi-Fi triangulation puede dar
+  // varios km de error en interior de túneles).
+  var MAX_ACCURACY_M = 1500;
+  // Si el GPS reporta que ya pasamos por la parada actual, marcar con hora real.
+  // El parámetro `skipped` se mantiene por compatibilidad pero ya NO altera la fuente
+  // (antes hacía estimateMark, ahora siempre marca con GPS).
   function autoMark(idx, skipped){
-    // Conflicto: la estación ya tiene marca manual → conservarla y avisar.
     if(API.getMark(idx) != null && API.getMarkSource(idx) === 'manual'){
       logEvent('conflicto', stName(idx) + ' — marca manual ' + API.getMark(idx) + ' conservada');
       setStatus('Conflicto en ' + stName(idx) + ': marca manual ' + API.getMark(idx) + ' conservada', 'warn');
       windowOpen = false;
       return;
     }
-    if(skipped){ estimateMark(idx); return; }
     var now = API.nowMin();
     var hhmm = pad(Math.floor(now/60) % 24) + ':' + pad(Math.floor(now % 60));
     API.setMark(idx, hhmm, 'gps');
-    logEvent('paso', stName(idx) + ' ' + hhmm + ' · GPS');
-    setStatus('✓ ' + stName(idx) + ' ' + hhmm + ' (GPS)', 'ok');
+    logEvent('paso', stName(idx) + ' ' + hhmm + (skipped ? ' · GPS (saltada en cadena)' : ' · GPS'));
+    if(!skipped) setStatus('✓ ' + stName(idx) + ' ' + hhmm + ' (GPS)', 'ok');
     windowOpen = false;
     recomputeNext();
   }
 
+  // Solo se usa cuando el GPS NO responde (timeout/permiso/cobertura): estima la
+  // hora con teórica + delta. Marcadas como 'est' para diferenciarlas en HT.
   function estimateMark(idx){
+    if(API.getMark(idx) != null && API.getMarkSource(idx) === 'manual'){
+      logEvent('conflicto', stName(idx) + ' — marca manual ' + API.getMark(idx) + ' conservada');
+      windowOpen = false;
+      return;
+    }
     var m = API.getMarch();
     var eff = m.s[idx].tm + currentDelta();
     var hhmm = fmtHM(eff);
@@ -166,6 +180,15 @@
     windowOpen = false;
     gpsFailCount = 0;
     recomputeNext();
+  }
+
+  // Mapa código de error → mensaje legible para el maquinista.
+  function gpsErrorMsg(err){
+    if(!err || typeof err.code === 'undefined') return 'Sin señal GPS';
+    if(err.code === 1) return '⚠ Permiso de ubicación denegado — revisa ajustes del navegador';
+    if(err.code === 2) return '⚠ GPS no disponible — activa la ubicación o sal del túnel';
+    if(err.code === 3) return '⏱ GPS lento (>10s) — débil cobertura';
+    return 'Error GPS (' + err.code + ')';
   }
 
   // ===== Ciclo principal =====================================================
@@ -187,14 +210,27 @@
     GeoSource.getCurrent().then(function(pos){
       if(!tracking) return;
       gpsFailCount = 0;
+      // G5: descartar posiciones imprecisas (cellular fallback puede dar 1000-2000m).
+      if(pos.accuracy != null && pos.accuracy > MAX_ACCURACY_M){
+        setStatus('GPS impreciso (' + Math.round(pos.accuracy) + 'm) — esperando mejor señal', 'warn');
+        return;
+      }
       var pr = projectGps(pos.lat, pos.lng);
       if(!pr){ logEvent('fuera_ruta', 'GPS fuera de la ruta', 'fuera'); setStatus('GPS fuera de la ruta — ¿tren correcto?', 'warn'); return; }
       if(pr.passedOrigIdx != null && pr.passedOrigIdx >= gpsNextIdx){
-        autoMark(gpsNextIdx, pr.passedOrigIdx > gpsNextIdx);
+        // G2: marcar EN CADENA todas las paradas que el GPS confirma ya pasadas,
+        // en lugar de procesar solo una por pollTick (que tardaba 30s/parada).
+        // Todas con hora actual y source='gps' (no inventamos teórica).
+        var safety = 0;
+        while(gpsNextIdx >= 0 && pr.passedOrigIdx >= gpsNextIdx && safety < 50){
+          var wasSkipped = pr.passedOrigIdx > gpsNextIdx;
+          autoMark(gpsNextIdx, wasSkipped);
+          // autoMark llama recomputeNext, actualiza gpsNextIdx
+          safety++;
+          // Si conflicto manual (autoMark devuelve sin recomputeNext porque setea windowOpen=false),
+          // safety previene loop infinito.
+        }
       } else {
-        // Mejora 1: el GPS confirma que el tren aún no ha llegado a la estación.
-        // Si ya pasó su hora prevista, el retraso real crece; se recalcula y se
-        // publica como retraso provisional (lo sustituirá la marca real al pasar).
         if(nowM > eff + 0.5){
           var prov = currentDelta() + (nowM - eff);
           API.setProvisionalDelay(prov);
@@ -205,17 +241,17 @@
           setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(eff) + ')');
         }
       }
-    }).catch(function(){
+    }).catch(function(err){
       if(!tracking) return;
       gpsFailCount++;
       var eff2 = effTime(gpsNextIdx);
-      // Se da la ventana por vencida al superar la hora efectiva + margen.
       var giveUp = (normNow(eff2) >= eff2 + GIVEUP_MIN);
       if(giveUp){
         estimateMark(gpsNextIdx);
       } else {
-        logEvent('sin_senal', 'Sin señal cerca de ' + name, 'sinsenal');
-        setStatus('Sin señal GPS cerca de ' + name + '…', 'warn');
+        var msg = gpsErrorMsg(err);
+        logEvent('sin_senal', msg + ' cerca de ' + name, 'sinsenal' + (err && err.code));
+        setStatus(msg + ' · cerca de ' + name, 'warn');
       }
     });
   }
@@ -230,10 +266,11 @@
     logEvent('inicio', 'Seguimiento iniciado · ' + (m.t || '') + ' ' + (m.o || '') + '→' + (m.d || ''));
     requestWakeLock();
     // Sonda de permiso dentro del gesto del usuario.
-    GeoSource.getCurrent().then(function(){
-      setStatus('GPS activo — seguimiento iniciado', 'ok');
-    }).catch(function(){
-      setStatus('Permiso de ubicación denegado o sin señal', 'warn');
+    GeoSource.getCurrent().then(function(pos){
+      var acc = pos.accuracy != null ? ' (precisión ' + Math.round(pos.accuracy) + 'm)' : '';
+      setStatus('GPS activo — seguimiento iniciado' + acc, 'ok');
+    }).catch(function(err){
+      setStatus(gpsErrorMsg(err), 'warn');
     });
     if(pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(pollTick, POLL_MS);
