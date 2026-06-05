@@ -515,16 +515,19 @@
      se apilan VERTICALMENTE con la flecha como separador. Color y peso
      idénticos al regular para que el maquinista vea ambos a la vez sin
      contraste de tipografías. */
-  tr.ltv-row td.ltv-km{color:#fff7a8;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  /* Km de LTV: IDÉNTICO al td.km regular — misma familia (heredada: Inter),
+     mismo tamaño (15px) y peso (600). Antes usaba JetBrains Mono, lo que lo
+     hacía parecer de distinto tamaño que el Km normal. */
+  tr.ltv-row td.ltv-km{color:#fff7a8;font-family:inherit;
     font-weight:600;font-size:15px;text-align:right;line-height:1.25;
-    white-space:normal;letter-spacing:0;padding-right:6px}
+    white-space:normal;letter-spacing:0;padding-right:8px}
   tr.ltv-row td.ltv-km .ltv-km-enter,
   tr.ltv-row td.ltv-km .ltv-km-exit{display:inline-block;font-weight:600;
     white-space:nowrap}
   tr.ltv-row td.ltv-km .ltv-km-arrow{display:inline-block;color:#ffd400;opacity:.9;
     font-weight:600;margin:0 2px}
   tr.ltv-row td.ltv-vmax-cell{color:#fff7a8!important;text-align:right;padding-right:8px;
-    font-weight:900;font-size:18px;background:rgba(255,212,0,.28)!important;
+    font-weight:900;font-size:15px;background:rgba(255,212,0,.28)!important;
     border-left:2px solid rgba(255,212,0,.85);border-right:2px solid rgba(255,212,0,.85);
     text-shadow:0 0 6px rgba(255,212,0,.45);letter-spacing:.5px}
   body.light tr.ltv-row td.ltv-vmax-cell{color:#5a3a00!important;background:rgba(212,153,0,.32)!important;
@@ -552,6 +555,14 @@
     border:1px solid rgba(248,81,73,.45);text-transform:uppercase}
   body.light tr.ltv-row .ltv-nosig{color:#b91c1c;background:rgba(185,28,28,.12);
     border-color:rgba(185,28,28,.45)}
+  /* Badge "CSV" (NARANJA) — LTV marcada con X en la columna CSV del DHLTV */
+  tr.ltv-row .ltv-csv{color:#ff9800;font-weight:800;font-size:10px;flex-shrink:0;
+    background:rgba(255,152,0,.16);padding:1px 6px;border-radius:3px;letter-spacing:.6px;
+    border:1px solid rgba(255,152,0,.55);text-transform:uppercase}
+  body.light tr.ltv-row .ltv-csv{color:#b35c00;background:rgba(224,123,0,.14);
+    border-color:rgba(224,123,0,.5)}
+  .dhltv-table .csv-x{color:#ff9800;font-weight:800;text-align:center}
+  body.light .dhltv-table .csv-x{color:#b35c00}
   tr.ltv-row td.ltv-dep{padding:7px 12px;color:#fff7a8;line-height:1.3}
   tr.ltv-row td.ltv-dep .ltv-cell{display:flex;flex-wrap:wrap;align-items:center;gap:9px;font-size:12px}
   tr.ltv-row .ltv-warn{color:#ffd400;font-weight:800;font-size:16px;flex-shrink:0;
@@ -579,6 +590,37 @@
   body.light tr.ltv-row .ltv-motivo{color:#5a3a00}
   body.light tr.ltv-row .ltv-codigo,
   body.light tr.ltv-row .ltv-observ{color:#7a4f00}
+  /* DHLTV: VMáx (col. Veloc.) mismo tamaño que Km Ini / Km Fin (11px) */
+  .dhltv-table .km,.dhltv-table .vel{font-size:11px}
+  .dhltv-table .observ{color:var(--fg-dim);font-style:italic;font-size:10px}
+  body.light .dhltv-table .observ{color:#5a6472}
+  /* ===== Anotaciones de RECUADRO del Libro Horario =====
+     (TASF, LZB, TRANSICIÓN ERTMS/LZB, VÍA / VÍAS). Insertadas como filas
+     en la columna Dependencia, entre el Km de inicio y el Km de fin. Si la
+     velocidad va en recuadro GRIS en el PDF, el marco se pinta en NARANJA. */
+  tr.boxann-row{background:rgba(120,170,255,.10)!important}
+  body.light tr.boxann-row{background:rgba(33,102,204,.09)!important}
+  tr.boxann-row td{border-top:1px dashed rgba(120,170,255,.45);
+    border-bottom:1px dashed rgba(120,170,255,.45);padding:5px 6px}
+  tr.boxann-row td.km{color:#a8c7ff;font-size:13px;font-weight:600;text-align:right;
+    padding-right:8px;white-space:normal;line-height:1.2;letter-spacing:0}
+  body.light tr.boxann-row td.km{color:#0b4ea2}
+  /* Cada PK en su propio span (nowrap): en pantallas anchas van en línea; en
+     móvil, al no caber el rango, se apilan verticalmente con la flecha. */
+  tr.boxann-row td.km .ba-enter,
+  tr.boxann-row td.km .ba-exit{display:inline-block;white-space:nowrap}
+  tr.boxann-row td.km .ba-arrow{display:inline-block;color:#6f9bff;opacity:.9;margin:0 2px}
+  tr.boxann-row td.name.boxann-dep{padding:5px 10px;line-height:1.3}
+  .boxann-cell{display:flex;flex-wrap:nowrap;align-items:center;gap:8px;min-width:0}
+  .boxann-vbox{display:inline-flex;align-items:center;justify-content:center;min-width:30px;
+    height:20px;padding:0 5px;border:2px solid #6f9bff;border-radius:3px;color:#dbe7ff;
+    font-weight:800;font-family:'JetBrains Mono',ui-monospace,Consolas,monospace;font-size:13px;
+    flex-shrink:0;background:transparent}
+  .boxann-vbox.gris{border-color:#ff9800;color:#ffd9a8;box-shadow:0 0 5px rgba(255,152,0,.45)}
+  body.light .boxann-vbox{border-color:#0b4ea2;color:#0b4ea2}
+  body.light .boxann-vbox.gris{border-color:#e07b00;color:#9a5400;box-shadow:none}
+  .boxann-text{color:#cfe0ff;font-weight:600;font-size:12px;letter-spacing:.2px;white-space:nowrap}
+  body.light .boxann-text{color:#1f2d4d}
   .usoweb-content{max-width:780px;margin:0 auto;padding:32px 28px;
     font-family:'Inter',sans-serif;color:var(--fg);line-height:1.7}
   .usoweb-content h2{font-family:'Poppins',sans-serif;font-weight:700;font-size:26px;
@@ -737,6 +779,15 @@
       white-space:normal}
     tr.ltv-row td.ltv-km .ltv-km-arrow{margin:0 1px}
     tr.ltv-row td.ltv-dep .ltv-cell{font-size:10px;gap:6px}
+    /* Anotaciones de recuadro (TASF/LZB/VÍA/…) en móvil:
+       - columna Km: cada PK se apila en su propia línea (no cabe el rango en 60px);
+       - Dependencia: texto más pequeño y en UNA sola línea. */
+    tr.boxann-row td.km{font-size:11px;padding-right:4px;line-height:1.15}
+    tr.boxann-row td.km .ba-arrow{margin:0 1px}
+    tr.boxann-row td.name.boxann-dep{padding:4px 6px}
+    .boxann-cell{gap:5px}
+    .boxann-vbox{min-width:22px;height:16px;font-size:10px;padding:0 3px;border-width:1.5px}
+    .boxann-text{font-size:9px;letter-spacing:0;white-space:nowrap}
   }
   /* Tablet vertical (portrait) — pantallas estrechas: ocultar columna Δ y compactar más */
   @media (min-width:600px) and (max-width:900px) and (orientation:portrait){
@@ -3160,6 +3211,7 @@
 "050"
 ]
 }</script>
+<script src="boxann.js"></script>
 <script>
 // =============================================================================
 // LIMPIEZA AUTOMÁTICA al iniciar/cerrar la web
@@ -3200,6 +3252,71 @@ window.addEventListener('unload', ebulaClearAllData);
   const DATA = JSON.parse(document.getElementById('data').textContent);
   const COORDS = JSON.parse(document.getElementById('coords').textContent);
   const LINES = JSON.parse(document.getElementById('lines').textContent);
+  // Anotaciones de RECUADRO del Libro Horario (boxann.js): TASF, LZB, TRANSICIÓN
+  // ERTMS/LZB, VÍA/VÍAS. Estructura: {d:[[vel,gris,texto],...], t:{tren:[[defIdx,kmA,kmB,kmPrev,kmNext],...]}}
+  const BOXANN = (window.BOXANN && window.BOXANN.d) ? window.BOXANN : {d:[],t:{}};
+  // Inserta las anotaciones de la marcha como filas sintéticas en march.s, una
+  // sola vez por marcha. Se colocan justo DESPUÉS de la parada cuyo Km coincide
+  // con kmPrev (la fila Km inmediatamente superior a la anotación en el PDF), y
+  // se desambigua por sentido de marcha local (igual lógica que LTV/ZN). Así la
+  // anotación queda exactamente entre el Km de inicio y el Km de fin del PDF.
+  function injectBoxAnns(march){
+    if(!march || march.__boxannDone) return;
+    march.__boxannDone = true;
+    const anns = BOXANN.t[march.t];
+    if(!anns || !anns.length) return;
+    const S = march.s;
+    const localDir = (i)=>{ // sentido en la parada i: signo(k_siguiente - k_i)
+      const k=S[i].k; if(typeof k!=='number') return 0;
+      for(let j=i+1;j<S.length;j++){ const kk=S[j].k; if(typeof kk==='number') return Math.sign(kk-k); }
+      for(let j=i-1;j>=0;j--){ const kk=S[j].k; if(typeof kk==='number') return Math.sign(k-kk); }
+      return 0;
+    };
+    const used=[]; const inserts=[];
+    anns.forEach((a, ord)=>{
+      const di=a[0], kmA=a[1], kmB=a[2], prevK=a[3], nextK=a[4];
+      const def=BOXANN.d[di]||['',0,''];
+      let dir=0;
+      if(kmA!=null && kmB!=null) dir=Math.sign(kmB-kmA);
+      else if(prevK!=null && nextK!=null) dir=Math.sign(nextK-prevK);
+      let best=-1, bestScore=-1e9;
+      if(prevK!=null){
+        for(let i=0;i<S.length;i++){
+          const k=S[i].k; if(typeof k!=='number') continue;
+          if(Math.abs(k-prevK)>0.06) continue;
+          let score=0;
+          const nd=localDir(i);
+          if(dir===0||nd===0||nd===dir) score+=2; else score-=3;
+          if(nextK!=null){
+            for(let j=i+1;j<Math.min(S.length,i+8);j++){
+              if(typeof S[j].k==='number' && Math.abs(S[j].k-nextK)<0.06){ score+=1.5; break; }
+            }
+          }
+          if(used.indexOf(i)<0) score+=0.5;
+          if(score>bestScore){ bestScore=score; best=i; }
+        }
+      }
+      if(best<0){ // fallback: tramo que contiene el km de referencia
+        const refk=(kmA!=null)?kmA:prevK;
+        if(refk!=null){
+          for(let i=0;i<S.length-1;i++){
+            const k0=S[i].k, k1=S[i+1].k;
+            if(typeof k0!=='number'||typeof k1!=='number') continue;
+            const lo=Math.min(k0,k1), hi=Math.max(k0,k1);
+            if(refk>=lo-0.06 && refk<=hi+0.06){ best=i; break; }
+          }
+        }
+      }
+      if(best<0) return;
+      used.push(best);
+      const kc = (kmA!=null)?kmA:(typeof S[best].k==='number'?S[best].k:null);
+      inserts.push({pos:best, ord:ord, obj:{k:kc, n:'', _boxann:{v:def[0], g:def[1], x:def[2], a:kmA, b:kmB}}});
+    });
+    // Insertar de mayor a menor posición para no invalidar índices; desempate por
+    // orden de PDF para que varias anotaciones en el mismo ancla queden en orden.
+    inserts.sort((x,y)=> (y.pos-x.pos) || (y.ord-x.ord));
+    for(const ins of inserts){ S.splice(ins.pos+1, 0, ins.obj); }
+  }
   const $ = id => document.getElementById(id);
   let curIdx = 0, march = null, curGrp = '';
   let punches = {};
@@ -3374,6 +3491,7 @@ window.addEventListener('unload', ebulaClearAllData);
   function renderRows(){
     const tbody = $('rows');
     tbody.innerHTML='';
+    injectBoxAnns(march);  // inserta anotaciones de recuadro (TASF/LZB/VÍA/…) una vez por marcha
     const vmxSpans = computeSpans(march.s, 'v', true);  // VMáx: une a través de vacías cuando coinciden valores
     vmxOwnerMap = new Array(march.s.length).fill(-1);
     let curVmxOwner = -1;
@@ -3403,9 +3521,11 @@ window.addEventListener('unload', ebulaClearAllData);
       const hasName = !!s.n;
       const isCdi = !!s._l010cdi;  // dependencia BCE/CDI añadida por L010
       const isZn  = !!(s._l010zn || s._l030zn || s._l040zn || s._l042zn || s._l050zn);   // Zona Neutra (cualquier línea)
-      const isMarker = isCdi || isZn;
+      const isBoxann = !!s._boxann;  // anotación de recuadro (TASF/LZB/VÍA/…)
+      const isMarker = isCdi || isZn || isBoxann;
       if(isCdi) tr.classList.add('cdi-row');
       if(isZn)  tr.classList.add('zn-row');
+      if(isBoxann) tr.classList.add('boxann-row');
       if(s.c || s.tc) tr.classList.add('stop');
       // Parada comercial: tiene minutos de parada comercial, o es origen/destino
       const isComStop = !isMarker && (!!s.c || idx===0 || idx===lastIdx);
@@ -3502,6 +3622,14 @@ window.addEventListener('unload', ebulaClearAllData);
         // Dependencia (el km de ENTRADA en la ZN), guardamos kmEnter aquí.
         // En asc: kmEnter = kLow; en desc: kmEnter = kHigh.
         s._znKmDisplay = znAsc ? kLow : kHigh;
+      } else if(isBoxann){
+        // Anotación de recuadro: [velocidad] + texto del PDF. Marco NARANJA si gris.
+        const ba = s._boxann;
+        const vboxCls = 'boxann-vbox' + (ba.g ? ' gris' : '');
+        const vbox = (ba.v !== '' && ba.v != null)
+          ? '<span class="'+vboxCls+'" title="Velocidad'+(ba.g?' — recuadro gris en el PDF':'')+'">'+escapeHtml(String(ba.v))+'</span>'
+          : '';
+        depContent = '<div class="boxann-cell">'+vbox+'<span class="boxann-text">'+escapeHtml(ba.x)+'</span></div>';
       } else {
         depContent = ((s.c||s.tc)?'<span class="stop-marker"></span>':'') +
                      (hasName?escapeHtml(s.n):'') + adifViaSuffix(s);
@@ -3509,13 +3637,23 @@ window.addEventListener('unload', ebulaClearAllData);
       // Para filas ZN, la columna Km usa el km de ENTRADA (primer km que aparece
       // en Dependencia), no s.k. Esto mantiene coherencia visual: el maquinista
       // ve el MISMO valor en la columna Km y en el inicio del rango Dependencia.
-      const kmCellValue = (isZn && typeof s._znKmDisplay === 'number')
-        ? s._znKmDisplay.toFixed(1)
-        : s.k.toFixed(1);
+      let kmCellValue;
+      if(isBoxann){
+        // Columna Km de la anotación: rango kmA → kmB tal cual el PDF (sentido del tren)
+        const ba = s._boxann;
+        const fba = v => (v==null||isNaN(v)) ? '' : v.toFixed(3).replace('.',',');
+        kmCellValue = (ba.a!=null && ba.b!=null)
+          ? ('<span class="ba-enter">'+fba(ba.a)+'</span><span class="ba-arrow"> → </span><span class="ba-exit">'+fba(ba.b)+'</span>')
+          : (typeof s.k==='number' ? ('<span class="ba-enter">'+s.k.toFixed(3).replace('.',',')+'</span>') : '');
+      } else {
+        kmCellValue = (isZn && typeof s._znKmDisplay === 'number')
+          ? s._znKmDisplay.toFixed(1)
+          : s.k.toFixed(1);
+      }
       tr.innerHTML = `
         <td class="km">${kmCellValue}</td>
         ${vmxCell}
-        <td class="name">${depContent}</td>
+        <td class="name${isBoxann?' boxann-dep':''}">${depContent}</td>
         <td class="time">${timeCell}</td>
         <td class="${comCls}" title="${comTitle}">${comTxt}</td>
         ${actualCell}
@@ -4386,10 +4524,19 @@ async function parseLTVPdf(file){
       const motivo = items.filter(it=>inBand(it,290,305)).sort((a,b)=>a.x-b.x)
         .map(b=>b.str).join(' ').replace(/\s+/g,' ').trim();
 
+      // Observaciones: columna situada a la derecha del PDF (cabecera en y≈735;
+      // contenido desde y≈700 hasta el borde y≈842). Puede ocupar 1-2 líneas.
+      const observ = items.filter(it=>inBand(it,698,845)).sort((a,b)=>a.x-b.x)
+        .map(b=>b.str).join(' ').replace(/\s+/g,' ').trim();
+
       // Columna "No señalizada" → subcol "Sistema" (x≈627). Una X indica
       // que la LTV NO está incorporada al sistema de señalización.
       const nsSistema = items.some(it =>
         inBand(it, 620, 640) && (it.str === 'X' || it.str === 'x' || it.str === '×'));
+
+      // Columna "CSV" (x≈686). Una X marca esta LTV en la columna CSV.
+      const csv = items.some(it =>
+        inBand(it, 680, 698) && (it.str === 'X' || it.str === 'x' || it.str === '×'));
 
       const km_ini = parseFloat((kmIniBits[0] && kmIniBits[0].str || '').replace(',','.'));
       const km_fin = parseFloat((kmFinBits[0] && kmFinBits[0].str || '').replace(',','.'));
@@ -4401,8 +4548,8 @@ async function parseLTVPdf(file){
           line: currentLine, codigo,
           trayecto: trayecto.replace(/-\s*$/,''),
           via, km_ini, km_fin, vmax,
-          motivo, observ: '',
-          nsSistema
+          motivo, observ,
+          nsSistema, csv
         });
       }
     }
@@ -4494,7 +4641,7 @@ function renderLTVList(){
     grp.appendChild(head);
     const tbl = document.createElement('table');
     tbl.className = 'dhltv-table';
-    tbl.innerHTML = `<thead><tr><th>Código</th><th>Trayecto / Estación</th><th>Vía</th><th>Km Ini</th><th>Km Fin</th><th>VMáx</th><th>Motivo</th></tr></thead>`;
+    tbl.innerHTML = `<thead><tr><th>Código</th><th>Trayecto / Estación</th><th>Vía</th><th>Km Ini</th><th>Km Fin</th><th>VMáx</th><th>CSV</th><th>Motivo</th><th>Observaciones</th></tr></thead>`;
     const tb = document.createElement('tbody');
     byLine[line].forEach(r=>{
       const tr = document.createElement('tr');
@@ -4505,7 +4652,9 @@ function renderLTVList(){
         <td class="km">${r.km_ini.toFixed(3).replace('.',',')}</td>
         <td class="km">${r.km_fin.toFixed(3).replace('.',',')}</td>
         <td class="vel">${r.vmax} km/h</td>
+        <td class="csv-x" title="${r.csv?'Marcada con X en columna CSV':''}">${r.csv?'X':''}</td>
         <td class="motivo">${escapeHtml(r.motivo||'')}</td>
+        <td class="observ">${escapeHtml(r.observ||'')}</td>
       `;
       tb.appendChild(tr);
     });
@@ -4865,12 +5014,16 @@ renderRows = function(){
       const noSigBadge = ltv.nsSistema
         ? '<span class="ltv-nosig" title="LTV no incorporada al sistema">⊘ NO INCORP. SISTEMA</span>'
         : '';
+      const csvBadge = ltv.csv
+        ? '<span class="ltv-csv" title="Marcada con X en la columna CSV del DHLTV">CSV</span>'
+        : '';
       html += '<td class="name ltv-dep" colspan="4" title="LTV ' + escapeHtml(ltv.codigo) + '">'+
           '<div class="ltv-cell">'+
             '<span class="ltv-warn">⚠</span>'+
             '<span class="ltv-via">V.' + escapeHtml(via) + '</span>'+
             '<span class="ltv-motivo">' + escapeHtml(motivo) + '</span>'+
             noSigBadge +
+            csvBadge +
             '<span class="ltv-codigo">LTV ' + escapeHtml(ltv.codigo) + ' · L' + escapeHtml(ltv.line) + '</span>'+
             observHtml +
           '</div>'+
