@@ -3241,12 +3241,11 @@ function ebulaClearAllData(){
     }
   } catch(e) {}
 }
-// La limpieza al CERRAR garantiza que la próxima apertura ya esté limpia,
-// por lo que NO ejecutamos la limpieza al cargar (eso interrumpiría la
-// carga de datos ADIF en vivo durante esta sesión).
-window.addEventListener('pagehide', ebulaClearAllData);
-window.addEventListener('beforeunload', ebulaClearAllData);
-window.addEventListener('unload', ebulaClearAllData);
+// Los listeners de borrado al cerrar se eliminaron: en móvil, `pagehide` se
+// dispara al cambiar de app (llamada, WhatsApp), y borraba las marcas del
+// servicio en curso. La limpieza ahora es quirúrgica al cambiar de tren
+// (clearOldServiceData en el cambio de curIdx) o explícita ("empezar de nuevo"
+// en el diálogo de recuperación al reabrir la app).
 
 (function(){
   const DATA = JSON.parse(document.getElementById('data').textContent);
@@ -3354,6 +3353,18 @@ window.addEventListener('unload', ebulaClearAllData);
   function savePunches(){try{localStorage.setItem(PUNCH_KEY,JSON.stringify(punches))}catch(e){}}
   function loadMarkSource(){try{markSource=JSON.parse(localStorage.getItem('ebula_marksrc_v1')||'{}')}catch(e){markSource={}}}
   function saveMarkSource(){try{localStorage.setItem('ebula_marksrc_v1',JSON.stringify(markSource))}catch(e){}}
+  // Borrado quirúrgico: elimina los datos del servicio identificado por oldKey
+  // (marcas, fuentes de marca y log GPS). Se llama al cambiar de tren y desde
+  // el diálogo "empezar de nuevo" tras detectar un cierre real.
+  function clearOldServiceData(oldKey){
+    if(!oldKey) return;
+    if(punches[oldKey]){ delete punches[oldKey]; savePunches(); }
+    if(markSource[oldKey]){ delete markSource[oldKey]; saveMarkSource(); }
+    try{
+      var g = JSON.parse(localStorage.getItem('ebula_gpslog_v1')||'{}');
+      if(g[oldKey]){ delete g[oldKey]; localStorage.setItem('ebula_gpslog_v1', JSON.stringify(g)); }
+    }catch(e){}
+  }
   function loadPrefs(){try{
     const p=JSON.parse(localStorage.getItem(STORAGE)||'{}');
     if(typeof p.idx==='number')curIdx=p.idx;
@@ -3744,10 +3755,14 @@ window.addEventListener('unload', ebulaClearAllData);
     } else if(prevIdx>=0){ activeIdx = prevIdx; }
     else if(nextIdx>=0){ activeIdx = nextIdx; }
     if(lp>=0 && activeIdx<lp) activeIdx = lp;
-    // Con el seguimiento GPS activo, la posición la manda la ÚLTIMA MARCA REAL:
-    // no se extrapola por reloj (la app no impone una estimación de posición).
-    if(window.HTIryo && window.HTIryo.isTracking && window.HTIryo.isTracking()){
-      activeIdx = (lp>=0) ? lp : 0;
+    // Con el seguimiento GPS activo, la posición la manda la ÚLTIMA MARCA REAL.
+    // PERO solo si ya existe alguna marca (lp >= 0). Si lp = -1 (servicio recién
+    // iniciado, ninguna estación intermedia confirmada por GPS todavía), la
+    // posición se calcula por la hora del libro como en modo sin GPS — así el
+    // tren AVANZA visualmente desde el origen en vez de quedarse congelado
+    // hasta el primer paso GPS confirmado.
+    if(window.HTIryo && window.HTIryo.isTracking && window.HTIryo.isTracking() && lp >= 0){
+      activeIdx = lp;
       prevIdx = activeIdx;
       nextIdx = -1;
       for(let j=activeIdx+1;j<stops.length;j++){ if(stops[j].tm!=null){ nextIdx=j; break; } }
@@ -4196,7 +4211,14 @@ window.addEventListener('unload', ebulaClearAllData);
           }).addTo(map);
           mk.on('click', ()=>{
             const i = ALL_MARCHAS.findIndex(e=>e.key===k);
-            if(i>=0){ curIdx=i; $('train').value=i; renderHeader(); renderRows(); updatePosition(); savePrefs(); drawRoute(); updateMapTrains(); fitMapToRoute(); }
+            if(i>=0){
+              const oldKey = (march ? tickKey() : null);
+              curIdx=i; $('train').value=i;
+              renderHeader();
+              if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
+              renderRows(); updatePosition(); savePrefs(); drawRoute(); updateMapTrains(); fitMapToRoute();
+              if(window.HTIryo && window.HTIryo._dispatchMarchaChange) window.HTIryo._dispatchMarchaChange();
+            }
           });
           mk.bindTooltip(tooltip, {direction:'top', offset:[0,-12]});
           trainMarkers[k] = mk;
@@ -4229,7 +4251,14 @@ window.addEventListener('unload', ebulaClearAllData);
 
   function bind(){
     $('train').addEventListener('change',e=>{
-      curIdx=+e.target.value; renderHeader(); renderRows(); updatePosition(); savePrefs();
+      // Al cambiar de tren: borra marcas + log GPS del servicio anterior.
+      // Cada servicio empieza limpio. tickKey() requiere march; se captura ANTES
+      // de actualizar curIdx para que apunte al tren anterior.
+      var oldKey = (march ? tickKey() : null);
+      curIdx=+e.target.value;
+      renderHeader();
+      if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
+      renderRows(); updatePosition(); savePrefs();
       if(mapInitialized){ drawRoute(); updateMapTrains(); fitMapToRoute(); }
       if(window.HTIryo && window.HTIryo._dispatchMarchaChange) window.HTIryo._dispatchMarchaChange();
     });
@@ -4393,6 +4422,30 @@ window.addEventListener('unload', ebulaClearAllData);
       }
     });
   }, 800);
+
+  // Detección de "servicio anterior en curso" — sessionStorage como centinela.
+  // sessionStorage persiste al cambiar de app pero se borra al cerrar el
+  // navegador. Si NO existe el flag y hay marcas en localStorage → fue cierre
+  // real (no un cambio de tab). Preguntar al maquinista: continuar o empezar
+  // de nuevo. Si existe el flag → fue un cambio de tab → recuperación silenciosa.
+  setTimeout(function(){
+    try{
+      var flag = sessionStorage.getItem('ebula_servicio_activo');
+      if(flag) return;  // cambio de tab — recuperación silenciosa
+      var p = JSON.parse(localStorage.getItem(PUNCH_KEY) || '{}');
+      var keys = Object.keys(p).filter(function(k){ return p[k] && Object.keys(p[k]).length > 0; });
+      if(!keys.length) return;  // sin servicios previos
+      // Si el tickKey actual está entre los servicios con marcas → preguntar.
+      var curKey = (march ? tickKey() : null);
+      if(!curKey || !p[curKey] || !Object.keys(p[curKey]).length) return;
+      var ok = confirm('⚠ Servicio anterior en curso\n\nHay marcas guardadas del tren ' + (march.t||'') + ' (' + (march.o||'') + ' → ' + (march.d||'') + ').\n\n¿Continuar con ese servicio?\n\n• Aceptar = continuar (mantiene marcas)\n• Cancelar = empezar de nuevo (borra marcas y log GPS)');
+      if(!ok){
+        clearOldServiceData(curKey);
+        applyPunches();
+        updatePosition();
+      }
+    }catch(e){}
+  }, 1200);
   // Detectar pestaña activa inicial y marcar body
   const initialActiveTab = document.querySelector('.tab.active');
   if(initialActiveTab) document.body.classList.add('tab-' + initialActiveTab.dataset.tab);

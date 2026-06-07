@@ -15,11 +15,13 @@
   if(!API){ console.warn('[GPS] API HTIryo no disponible — módulo desactivado'); return; }
 
   // ---- Parámetros ----
-  var POLL_MS    = 30000;  // cada cuánto se ejecuta el ciclo (solo consulta GPS con ventana abierta)
-  var LEAD_MIN   = 2;      // minutos antes de la hora efectiva en que se abre la ventana
-  var GIVEUP_MIN = 3;      // minutos tras la hora efectiva sin señal → rellenar con estimada
-  var OFF_ROUTE  = 1e-3;   // umbral de "fuera de ruta" (distancia² en grados; ~3 km)
-  var ARM_LEAD   = 3;      // minutos antes de la salida en que aparece el aviso de arranque
+  var POLL_MS       = 30000;  // intervalo normal (ventana cerrada o ventana abierta sin fallos)
+  var POLL_MS_FAST  = 15000;  // intervalo rápido cuando hubo ≥1 fallo en la ventana actual
+  var LEAD_MIN      = 2;      // minutos antes de la hora efectiva en que se abre la ventana
+  var GIVEUP_MIN    = 3;      // minutos tras la hora efectiva sin señal → rellenar con estimada (base)
+  var GIVEUP_MAX    = 5;      // cap del GIVEUP adaptativo (3 + gpsFailCount, máx GIVEUP_MAX)
+  var OFF_ROUTE     = 1e-3;   // umbral de "fuera de ruta" (distancia² en grados; ~3 km)
+  var ARM_LEAD      = 3;      // minutos antes de la salida en que aparece el aviso de arranque
 
   // ---- Estado ----
   var tracking   = false;
@@ -245,7 +247,10 @@
       if(!tracking) return;
       gpsFailCount++;
       var eff2 = effTime(gpsNextIdx);
-      var giveUp = (normNow(eff2) >= eff2 + GIVEUP_MIN);
+      // GIVEUP adaptativo: cada fallo añade 1 min al margen, hasta GIVEUP_MAX.
+      // 0 fallos → 3 min | 1 fallo → 4 min | 2+ fallos → 5 min (cap).
+      var giveUpMin = Math.min(GIVEUP_MIN + gpsFailCount, GIVEUP_MAX);
+      var giveUp = (normNow(eff2) >= eff2 + giveUpMin);
       if(giveUp){
         estimateMark(gpsNextIdx);
       } else {
@@ -257,12 +262,29 @@
   }
 
   // ===== Arranque / parada ===================================================
+  // Planificación adaptativa: setTimeout recursivo. Cuando la ventana de una
+  // estación está abierta y ya hubo ≥1 fallo de GPS en ella, el siguiente sondeo
+  // se acelera a POLL_MS_FAST (15s) para reducir el hueco ciego entre lecturas
+  // — relevante a 300 km/h, donde cada 30s son ~2,5 km recorridos.
+  function schedulePoll(){
+    if(!tracking) return;
+    var delay = (windowOpen && gpsFailCount > 0) ? POLL_MS_FAST : POLL_MS;
+    pollTimer = setTimeout(function(){
+      pollTick();
+      schedulePoll();
+    }, delay);
+  }
+
   function startTracking(){
     if(tracking) return;
     var m = API.getMarch();
     if(!m){ setStatus('No hay marcha seleccionada', 'warn'); return; }
     tracking = true; windowOpen = false; gpsFailCount = 0; armed = false;
     recomputeNext();
+    // Centinela de sesión: sobrevive a cambio de app, se borra al cerrar el
+    // navegador. Si al cargar la app no existe pero hay marcas guardadas →
+    // se detecta cierre real → index.html muestra el diálogo de recuperación.
+    try{ sessionStorage.setItem('ebula_servicio_activo', (API.getTickKey && API.getTickKey()) || '1'); }catch(e){}
     logEvent('inicio', 'Seguimiento iniciado · ' + (m.t || '') + ' ' + (m.o || '') + '→' + (m.d || ''));
     requestWakeLock();
     // Sonda de permiso dentro del gesto del usuario.
@@ -272,16 +294,18 @@
     }).catch(function(err){
       setStatus(gpsErrorMsg(err), 'warn');
     });
-    if(pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(pollTick, POLL_MS);
+    if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
     updateButton();
     pollTick();
+    schedulePoll();
   }
 
   function stopTracking(){
     if(tracking) logEvent('fin', 'Seguimiento detenido');
     tracking = false; windowOpen = false;
-    if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
+    if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
+    // Parada explícita por el maquinista: libera el centinela de sesión.
+    try{ sessionStorage.removeItem('ebula_servicio_activo'); }catch(e){}
     releaseWakeLock();
     hideAction();
     if(API.setProvisionalDelay) API.setProvisionalDelay(null);
@@ -432,7 +456,19 @@
   // el seguimiento GPS está activo.
   API.isTracking = function(){ return tracking; };
   // Registra en el log una marca hecha a mano (la llama index.html desde punchAt).
-  API.logManualMark = function(idx){ logEvent('paso', stName(idx) + ' · manual'); };
+  // Tras la marca manual, el GPS deja la estación marcada y avanza a la siguiente:
+  // cierra la ventana actual y recalcula gpsNextIdx. Entre la estación marcada
+  // y la siguiente, la posición se calcula por tiempo (lógica de updatePosition).
+  // Cuando el tren entre en la ventana de la nueva siguiente estación, el GPS
+  // intentará localizarla con la lógica normal. Si el maquinista borra la marca
+  // (clearPunch en index.html, por marcado erróneo), recomputeNext del siguiente
+  // pollTick volverá a apuntar a esa misma estación de forma natural.
+  API.logManualMark = function(idx){
+    logEvent('paso', stName(idx) + ' · manual');
+    windowOpen = false;
+    gpsFailCount = 0;
+    recomputeNext();
+  };
   buildUI();
   checkDeparture();
   armTimer = setInterval(checkDeparture, 20000);
