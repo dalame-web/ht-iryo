@@ -4537,6 +4537,17 @@
       if(trackingOn) window._suppressAutoScroll=false;
       if(march) updatePosition();
     });
+    // Al iniciar el seguimiento GPS se activa el seguimiento por hora (resaltado),
+    // para que el maquinista vea su posición sin tener que tocar este botón. Después
+    // puede alternar ON/OFF libremente sin que ello afecte al GPS (son independientes).
+    if(window.HTIryo){
+      window.HTIryo.enableHourFollow = function(){
+        if(trackingOn) return;
+        trackingOn = true; sync(); savePrefs();
+        window._suppressAutoScroll = false;
+        if(march) updatePosition();
+      };
+    }
   })();
   // Mostrar la versión del Service Worker bajo "Web no oficial" en la portada.
   (function showSwVersion(){

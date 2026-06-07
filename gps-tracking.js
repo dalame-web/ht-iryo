@@ -309,6 +309,9 @@
     if(!m){ setStatus('No hay marcha seleccionada', 'warn'); return; }
     tracking = true; windowOpen = false; gpsFailCount = 0; armed = false;
     recomputeNext();
+    // Activa el seguimiento por hora (resaltado de posición) al iniciar el GPS.
+    // El maquinista puede luego alternarlo ON/OFF sin afectar al GPS.
+    if(API.enableHourFollow) API.enableHourFollow();
     // Centinela de sesión: sobrevive a cambio de app, se borra al cerrar el
     // navegador. Si al cargar la app no existe pero hay marcas guardadas →
     // se detecta cierre real → index.html muestra el diálogo de recuperación.
