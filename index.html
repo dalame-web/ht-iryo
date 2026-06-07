@@ -3418,6 +3418,13 @@
       if(g[oldKey]){ delete g[oldKey]; localStorage.setItem('ebula_gpslog_v1', JSON.stringify(g)); }
     }catch(e){}
   }
+  // R3: confirma antes de abandonar un servicio que TIENE marcas (cambiar de tren las
+  // borra junto con su log GPS). Devuelve true si se puede continuar: sin marcas, o el
+  // maquinista acepta. En el momento de llamarla, `march` aún es el tren saliente.
+  function confirmLeaveService(oldKey){
+    if(!oldKey || !punches[oldKey] || !Object.keys(punches[oldKey]).length) return true;
+    return confirm('¿Cambiar de tren?\n\nSe borrarán las marcas y el registro GPS del servicio actual (' + ((march&&march.t)||'') + ').\n\n• Aceptar = cambiar (borra las marcas)\n• Cancelar = seguir en este tren');
+  }
   function loadPrefs(){try{
     const p=JSON.parse(localStorage.getItem(STORAGE)||'{}');
     if(typeof p.idx==='number')curIdx=p.idx;
@@ -4289,6 +4296,7 @@
             const i = ALL_MARCHAS.findIndex(e=>e.key===k);
             if(i>=0){
               const oldKey = (march ? tickKey() : null);
+              if(!confirmLeaveService(oldKey)) return;   // R3: no cambiar si cancela
               curIdx=i; $('train').value=i;
               renderHeader();
               if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
@@ -4331,6 +4339,10 @@
       // Cada servicio empieza limpio. tickKey() requiere march; se captura ANTES
       // de actualizar curIdx para que apunte al tren anterior.
       var oldKey = (march ? tickKey() : null);
+      var oldIdx = curIdx;
+      // R3: si el servicio actual tiene marcas, confirmar antes de cambiar (el cambio
+      // las borra). Si cancela, se revierte el desplegable y no se borra nada.
+      if(!confirmLeaveService(oldKey)){ e.target.value = oldIdx; return; }
       curIdx=+e.target.value;
       renderHeader();
       if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);

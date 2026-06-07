@@ -1,5 +1,5 @@
 /* HT Iryo — Service Worker */
-const CACHE_NAME = 'ebula-v22.loc';
+const CACHE_NAME = 'ebula-v23.loc';
 const PRECACHE = [
   './',
   './index.html',
