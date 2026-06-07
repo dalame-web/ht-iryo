@@ -6,16 +6,17 @@ qué cambios de su autor se han portado a la versión de David.
 
 ## Estado actual
 
-- **Último commit upstream revisado/portado:** `850c7b7` — *CSV y F/T00A-LZB* (04-06-2026)
+- **Último commit upstream revisado/portado:** `0b5d703` — *Corrección parámetros ZN L030* (07-06-2026)
+- **Nota:** A partir del 07-06-2026 el porte se aplica **solo a ht-iryo**. El repo `Iryo-Studio` queda parado y NO recibe portes nuevos.
 - **Marcador de baseline:** el commit `54bb762` coincidía exactamente con el
   baseline de David `1d6f41e`. El seguimiento de cambios nuevos se hace ahora
-  desde `850c7b7`.
+  desde `0b5d703`.
 
 ## Cómo comprobar si hay cambios nuevos
 
 1. `git fetch upstream`
-2. `git log 850c7b7..upstream/main --oneline`
-3. `git diff 850c7b7 upstream/main -- index.html sw.js manifest.webmanifest boxann.js`
+2. `git log 0b5d703..upstream/main --oneline`
+3. `git diff 0b5d703 upstream/main -- index.html sw.js manifest.webmanifest boxann.js`
 
 ## Regla crítica
 
@@ -28,6 +29,7 @@ cae sobre esa lógica, NO se aplica: se avisa a David y se resuelve caso a caso.
 | Fecha porte | Commit(s) upstream | Qué se portó | Notas |
 |-------------|--------------------|--------------|-------|
 | 2026-05-22  | (baseline `54bb762`) | Punto de partida del seguimiento | El baseline de David ya equivale a este commit |
+| 2026-06-07  | `7e4596d` + `6c65068` + `38e6d7e` + `4fdce49` + `0b5d703` | Corrección LTV PK BIF.MÁLAGA; fix sincronizador; cambios CSS; estilos ZN + botones D/N (día/noche); nuevo botón "Seguimiento ON/OFF" (`#track-toggle`) para alternar el modo de seguimiento por hora; mostrar versión del Service Worker en portada (`#sw-version`); tutorial básico de uso; corrección parámetros ZN L030 | Fusión 3-bandas con 2 conflictos (1: clase de `reset-punches` + botón GPS adyacente; 2: bloque API GPS + nuevos IIFE `bindTrackToggle`/`showSwVersion`). Ambos resueltos conservando todo el GPS. Solo aplicado a ht-iryo (Iryo-Studio queda parado a partir de esta fecha). |
 | 2026-06-04  | `8bab2cb` + `b673c40` + `850c7b7` | Nuevo archivo `boxann.js` con datos de anotaciones de recuadro (TASF, LZB, transiciones ERTMS, vías) extraídos de los Libros Horario 306-011-26 y 206-004-26 (66 definiciones, 92 trenes); render de recuadros en la tabla de horario; exportación a CSV; soporte para tren F/T00A-LZB. `sw.js` añade `boxann.js` al PRECACHE | Fusión 3-bandas limpia (0 conflictos). GPS intacto. Archivo nuevo `boxann.js` añadido a ambos repos. Aplicado también a Iryo-Studio. |
 | 2026-06-04  | `4a10109`          | Mejoras visuales y de robustez en LTV y Zonas Neutras: rediseño completo del aspecto de las filas LTV (amarillo más intenso, VMáx destacada, bordes y sombras); nueva clase `ltv-affected` que sombrea todas las paradas dentro del rango de una LTV; km de la LTV en spans separados (entrada/flecha/salida); cálculo de dirección en cascada de 3 señales (ventana de stops, par local, fallback global) para LTV y ZN; fila ZN sin texto "ZONA NEUTRA" (solo SVG + rango), km de entrada en la columna Km | Fusión a 3 bandas limpia (0 conflictos). GPS verificado intacto. Aplicado también a Iryo-Studio. |
 | 2026-06-02  | `8d5020f` + `ecbc18a` | (8d5020f) Re-mostrar ADIF/Mapa; conexión SignalR `PRE-ECM-` + reconexión automática; Zaragoza Delicias marcada `noData`; código Puertollano corregido a 37700. (ecbc18a) Filas de Zonas Neutras en horario; filtro Vía I/II/Ambas en DHLTV; mejoras en emparejamiento LTV; actualización del JSON de horarios | Fusión a 3 bandas limpia (0 conflictos). GPS verificado intacto. Probado en navegador. Aplicado también a Iryo-Studio. |
