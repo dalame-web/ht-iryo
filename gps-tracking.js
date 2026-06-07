@@ -267,6 +267,28 @@
     });
   }
 
+  // Reconciliación tras 2.º plano: en móvil los timers se congelan cuando la app
+  // pasa a segundo plano o se bloquea la pantalla, así que las ventanas de varias
+  // estaciones pueden vencer sin sondearse. Al volver el foco, esta función rellena
+  // EN UNA SOLA PASADA, por estimación, todas las estaciones cuya ventana ya venció
+  // del todo (now > hora efectiva + GIVEUP_MAX) mientras la app estuvo suspendida.
+  // Se detiene en la primera estación cuyo margen aún NO ha vencido: esa se deja a
+  // la consulta de GPS en vivo (pollTick), que tiene prioridad sobre la estimación.
+  function catchUp(){
+    if(!tracking) return;
+    recomputeNext();
+    var guard = 0;
+    while(gpsNextIdx >= 0 && guard < 100){
+      var eff = effTime(gpsNextIdx);
+      if(normNow(eff) >= eff + GIVEUP_MAX){
+        estimateMark(gpsNextIdx);   // marca 'est' y llama a recomputeNext()
+        guard++;
+      } else {
+        break;                       // estación "actual": la resuelve el GPS en vivo
+      }
+    }
+  }
+
   // ===== Arranque / parada ===================================================
   // Planificación adaptativa: setTimeout recursivo. Cuando la ventana de una
   // estación está abierta y ya hubo ≥1 fallo de GPS en ella, el siguiente sondeo
@@ -438,12 +460,14 @@
       requestWakeLock();
       if(hadHidden){
         hadHidden = false;
-        showAction('⚠ En 2.º plano: el seguimiento pudo pausarse — toca para reactivar', function(){
-          hideAction();
-          requestWakeLock();
-          pollTick();
-          setStatus('Localización reactivada', 'ok');
-        });
+        // Reconciliación AUTOMÁTICA: sin depender de que el maquinista toque nada.
+        // Primero se rellenan las estaciones cuya ventana venció mientras la app
+        // estuvo suspendida; luego se consulta el GPS para la estación actual.
+        hideAction();
+        requestWakeLock();
+        catchUp();
+        pollTick();
+        setStatus('Localización reactivada — posición recuperada', 'ok');
       }
     }
   });
