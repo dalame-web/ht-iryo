@@ -3293,34 +3293,6 @@
 }</script>
 <script src="boxann.js"></script>
 <script>
-// =============================================================================
-// LIMPIEZA AUTOMÁTICA al iniciar/cerrar la web
-// Borra localStorage, sessionStorage, cookies y caches del Service Worker.
-// =============================================================================
-function ebulaClearAllData(){
-  try { localStorage.clear(); } catch(e) {}
-  try { sessionStorage.clear(); } catch(e) {}
-  // Borrar todas las cookies del dominio actual
-  try {
-    document.cookie.split(';').forEach(function(c){
-      var name = c.split('=')[0].trim();
-      if(!name) return;
-      var paths = ['/', location.pathname, location.pathname.replace(/\/[^\/]*$/, '/')];
-      paths.forEach(function(p){
-        document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=' + p;
-        document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=' + p + '; domain=' + location.hostname;
-      });
-    });
-  } catch(e) {}
-  // Borrar todas las caches (Service Worker / Cache Storage API)
-  try {
-    if(typeof caches !== 'undefined' && caches.keys){
-      caches.keys().then(function(keys){
-        keys.forEach(function(k){ try { caches.delete(k); } catch(e) {} });
-      }).catch(function(){});
-    }
-  } catch(e) {}
-}
 // Los listeners de borrado al cerrar se eliminaron: en móvil, `pagehide` se
 // dispara al cambiar de app (llamada, WhatsApp), y borraba las marcas del
 // servicio en curso. La limpieza ahora es quirúrgica al cambiar de tren
@@ -3837,15 +3809,19 @@ function ebulaClearAllData(){
     } else if(prevIdx>=0){ activeIdx = prevIdx; }
     else if(nextIdx>=0){ activeIdx = nextIdx; }
     if(lp>=0 && activeIdx<lp) activeIdx = lp;
-    // Con el seguimiento GPS activo, la posición la manda la ÚLTIMA MARCA REAL.
-    // PERO solo si ya existe alguna marca (lp >= 0). Si lp = -1 (servicio recién
-    // iniciado, ninguna estación intermedia confirmada por GPS todavía), la
-    // posición se calcula por la hora del libro como en modo sin GPS — así el
-    // tren AVANZA visualmente desde el origen en vez de quedarse congelado
-    // hasta el primer paso GPS confirmado.
+    // Con el seguimiento GPS activo, el TIEMPO SIEMPRE CORRE: el icono avanza por
+    // estimación (lógica de tiempo de arriba), nunca se congela. El GPS solo RETIENE
+    // la posición cuando ha localizado y confirma que el tren AÚN no ha pasado la
+    // siguiente estación: en ese caso pollTick fija provisionalDelay>0 (Caso 1, p.ej.
+    // parado en señal en la estación A) → se mantiene en la última estación real
+    // confirmada (lp) y el retraso crece, sin fingir el paso por B.
+    // Si el GPS NO tiene señal (Caso 2), provisionalDelay queda a null → NO hay
+    // retención → el icono sigue avanzando por tiempo a C, D… mientras el GPS sigue
+    // intentando localizar; al lograrlo, autoMark/estimateMark fijan el paso real con
+    // su retraso y lp avanza. (lp = -1, sin marcas aún: avanza por hora desde origen.)
     if(window.HTIryo && window.HTIryo.isTracking && window.HTIryo.isTracking() && lp >= 0){
-      activeIdx = lp;
-      prevIdx = activeIdx;
+      if(provisionalDelay != null && provisionalDelay > 0){ activeIdx = lp; }   // Caso 1
+      prevIdx = lp;
       nextIdx = -1;
       for(let j=activeIdx+1;j<stops.length;j++){ if(stops[j].tm!=null){ nextIdx=j; break; } }
     }
@@ -3952,6 +3928,11 @@ function ebulaClearAllData(){
     provisionalDelay = null;
     savePunches();
     saveMarkSource();
+    // Centinela de sesión también al marcar a mano (sin GPS): así una recarga
+    // conserva el flag → recuperación silenciosa. El diálogo "servicio anterior"
+    // solo saltará tras un cierre real (sessionStorage se borra al cerrar). Sin
+    // esto, marcar a mano sin iniciar GPS hacía saltar el diálogo en cada recarga.
+    try{ sessionStorage.setItem('ebula_servicio_activo', tickKey()); }catch(e){}
     applyPunches();
     window._suppressAutoScroll = false;
     updatePosition();
