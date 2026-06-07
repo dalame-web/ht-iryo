@@ -4552,11 +4552,12 @@
   // Mostrar la versión del Service Worker bajo "Web no oficial" en la portada.
   (function showSwVersion(){
     const el=$('sw-version'); if(!el) return;
-    const FALLBACK='ebula-v22';
+    const FALLBACK='ebula-v22.loc';
     const set=v=>{ el.textContent = v || FALLBACK; };
     if(window.caches && caches.keys){
       caches.keys().then(keys=>{
-        const k=keys.filter(x=>/^ebula-v\d+$/.test(x))
+        // El sufijo ".loc" marca esta rama con localización GPS (vs. la original).
+        const k=keys.filter(x=>/^ebula-v\d+(\.loc)?$/.test(x))
                     .sort((a,b)=>parseInt(a.slice(7))-parseInt(b.slice(7))).pop();
         set(k||FALLBACK);
       }).catch(()=>set(FALLBACK));
