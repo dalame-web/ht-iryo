@@ -246,6 +246,12 @@
     }).catch(function(err){
       if(!tracking) return;
       gpsFailCount++;
+      // Margen de gracia (N2): el 1.er fallo mantiene la posición (el tren puede
+      // seguir parado, o ser un parpadeo aislado del GPS). A partir del 2.º fallo
+      // SEGUIDO, sin confirmación de "parado", se pasa al Caso 2: se limpia el
+      // retraso provisional para que updatePosition deje avanzar el icono por tiempo.
+      // Exigir dos fallos consecutivos evita oscilar ante un parpadeo suelto de señal.
+      if(gpsFailCount >= 2 && API.setProvisionalDelay) API.setProvisionalDelay(null);
       var eff2 = effTime(gpsNextIdx);
       // GIVEUP adaptativo: cada fallo añade 1 min al margen, hasta GIVEUP_MAX.
       // 0 fallos → 3 min | 1 fallo → 4 min | 2+ fallos → 5 min (cap).

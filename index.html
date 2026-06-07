@@ -3820,10 +3820,19 @@
     // intentando localizar; al lograrlo, autoMark/estimateMark fijan el paso real con
     // su retraso y lp avanza. (lp = -1, sin marcas aún: avanza por hora desde origen.)
     if(window.HTIryo && window.HTIryo.isTracking && window.HTIryo.isTracking() && lp >= 0){
-      if(provisionalDelay != null && provisionalDelay > 0){ activeIdx = lp; }   // Caso 1
-      prevIdx = lp;
-      nextIdx = -1;
-      for(let j=activeIdx+1;j<stops.length;j++){ if(stops[j].tm!=null){ nextIdx=j; break; } }
+      if(provisionalDelay != null && provisionalDelay > 0){
+        // Caso 1: el GPS confirma que el tren no ha pasado la siguiente estación
+        // (p.ej. parado en señal). Se fija el icono en la última estación real y se
+        // recalcula el siguiente objetivo a partir de ahí.
+        activeIdx = lp;
+        prevIdx = lp;
+        nextIdx = -1;
+        for(let j=activeIdx+1;j<stops.length;j++){ if(stops[j].tm!=null){ nextIdx=j; break; } }
+      }
+      // Caso 2 (sin retraso provisional): el icono avanza por tiempo con la lógica
+      // natural. prevIdx/nextIdx ya están bien calculados (no se tocan), así las
+      // estaciones entre la última marca y la posición estimada se resaltan como
+      // 'past' correctamente, sin el hueco cosmético de N1.
     }
 
     // Seguimiento por hora DESACTIVADO: no resaltar posición "ahora"/pasado/próximo
