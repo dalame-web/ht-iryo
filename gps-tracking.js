@@ -307,6 +307,8 @@
     if(tracking) return;
     var m = API.getMarch();
     if(!m){ setStatus('No hay marcha seleccionada', 'warn'); return; }
+    // R4: asegurar hora real (descarta el modo de hora manual si quedó activo).
+    if(API.forceLiveTime) API.forceLiveTime();
     tracking = true; windowOpen = false; gpsFailCount = 0; armed = false;
     recomputeNext();
     // Activa el seguimiento por hora (resaltado de posición) al iniciar el GPS.
@@ -469,14 +471,7 @@
         hideAction();
         requestWakeLock();
         catchUp();
-        // Reinicia limpiamente la cadena de sondeo: cancela el timer que pudiera
-        // haber quedado pendiente del 2.º plano, hace un sondeo inmediato y reprograma.
-        // Garantiza una única cadena viva tras la reanudación (sin depender del manejo
-        // de timers en 2.º plano de cada navegador) y evita el doble sondeo que había
-        // antes (pollTick manual + timer obsoleto disparando poco después).
-        if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
         pollTick();
-        schedulePoll();
         setStatus('Localización reactivada — posición recuperada', 'ok');
       }
     }

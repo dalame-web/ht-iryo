@@ -4296,7 +4296,6 @@
             const i = ALL_MARCHAS.findIndex(e=>e.key===k);
             if(i>=0){
               const oldKey = (march ? tickKey() : null);
-              if(!confirmLeaveService(oldKey)) return;   // R3: no cambiar si cancela
               curIdx=i; $('train').value=i;
               renderHeader();
               if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
@@ -4454,6 +4453,10 @@
       snapToPolyline: snapToPolyline,
       nowMin: nowMin,
       getTickKey: tickKey,
+      // R4: el seguimiento GPS solo tiene sentido contra la hora REAL. Si quedó
+      // activado el modo de hora manual (función de prueba/repaso), al iniciar el GPS
+      // se vuelve a la hora real para que ventanas, marcas y retrasos sean correctos.
+      forceLiveTime: function(){ if(!liveMode){ goLive(); } },
       refreshPositionBox: refreshPositionBox,
       setProvisionalDelay: function(min){ provisionalDelay = (min == null ? null : min); updatePosition(); },
       getMark: function(idx){ return (punches[tickKey()]||{})[idx]; },
