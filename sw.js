@@ -1,9 +1,10 @@
 /* HT Iryo — Service Worker */
-const CACHE_NAME = 'ebula-v26.loc';
+const CACHE_NAME = 'ebula-v27.loc';
 const PRECACHE = [
   './',
   './index.html',
   './gps-tracking.js',
+  './app-logger.js',
   './boxann.js',
   './manifest.webmanifest',
   './icon-192.png',
