@@ -211,12 +211,23 @@
     // Ventana abierta → consultar el GPS
     GeoSource.getCurrent().then(function(pos){
       if(!tracking) return;
-      gpsFailCount = 0;
       // G5: descartar posiciones imprecisas (cellular fallback puede dar 1000-2000m).
       if(pos.accuracy != null && pos.accuracy > MAX_ACCURACY_M){
+        // Plan B (igual que un timeout sin señal): una lectura imprecisa cuenta como
+        // fallo. Así el sondeo se acelera a 15s para pillar antes una buena, y si la
+        // imprecisión PERSISTE pasada la ventana de gracia (GIVEUP), se estima la marca
+        // por tiempo y se avanza — en vez de quedarse atascado indefinidamente en la
+        // estación sin marcar ni estimar.
+        gpsFailCount++;
+        var effImp = effTime(gpsNextIdx);
+        if(normNow(effImp) >= effImp + Math.min(GIVEUP_MIN + gpsFailCount, GIVEUP_MAX)){
+          estimateMark(gpsNextIdx);
+          return;
+        }
         setStatus('GPS impreciso (' + Math.round(pos.accuracy) + 'm) — esperando mejor señal', 'warn');
         return;
       }
+      gpsFailCount = 0;   // lectura usable: reinicia el contador de fallos
       var pr = projectGps(pos.lat, pos.lng);
       if(!pr){ logEvent('fuera_ruta', 'GPS fuera de la ruta', 'fuera'); setStatus('GPS fuera de la ruta — ¿tren correcto?', 'warn'); return; }
       if(pr.passedOrigIdx != null && pr.passedOrigIdx >= gpsNextIdx){
