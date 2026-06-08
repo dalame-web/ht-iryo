@@ -887,9 +887,111 @@
     #pwa-install .pwa-text small{display:none}
     #pwa-install button{padding:6px 10px;font-size:11px}
   }
+  /* ===== Ventanas propias de la app (appModal) — sustituyen a confirm()/alert() ===== */
+  .modal-overlay{position:fixed;inset:0;z-index:100000;display:flex;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.55);padding:20px;opacity:0;pointer-events:none;transition:opacity .15s ease}
+  .modal-overlay.open{opacity:1;pointer-events:auto}
+  .modal-box{background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:14px;
+    max-width:440px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.5);padding:20px 20px 16px;
+    transform:translateY(8px) scale(.98);transition:transform .15s ease}
+  .modal-overlay.open .modal-box{transform:none}
+  .modal-title{font-size:17px;font-weight:700;margin:0 0 8px;line-height:1.25}
+  .modal-msg{font-size:14px;line-height:1.5;opacity:.92;white-space:pre-line;margin:0 0 18px}
+  .modal-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+  .modal-btn{flex:1 1 auto;min-width:130px;padding:11px 14px;border-radius:9px;border:1px solid var(--border);
+    background:var(--panel-2);color:var(--fg);font-size:14px;font-weight:600;cursor:pointer;transition:filter .1s ease}
+  .modal-btn:hover{filter:brightness(1.12)}
+  .modal-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .modal-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .modal-btn.danger{background:#e8201c;border-color:#e8201c;color:#fff}
+  .modal-btn.neutral{background:var(--panel-2);color:var(--fg)}
+  body.modal-open{overflow:hidden}
+  @media (max-width:520px){ .modal-btn{flex-basis:100%} }
 </style>
 </head>
 <body class="locked">
+<script>
+/* ===== appModal — ventanas propias de la app (sustituyen confirm()/alert()) =====
+ * window.appModal.confirm({title, message, buttons:[{label, value, kind}], dismissValue, backdropClose})
+ *   → Promise<value> (value del botón pulsado; dismissValue en ESC/fondo)
+ * window.appModal.alert({title, message, button}) → Promise<void>
+ * kind: 'primary' (resaltado y enfocado) | 'danger' (rojo) | 'neutral'. */
+(function(){
+  var overlay = null, box = null, current = null, queue = [];
+  function build(){
+    if(overlay) return;
+    overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.setAttribute('role','presentation');
+    box = document.createElement('div');
+    box.className = 'modal-box';
+    box.setAttribute('role','dialog');
+    box.setAttribute('aria-modal','true');
+    overlay.appendChild(box);
+    overlay.addEventListener('click', function(e){
+      if(e.target === overlay && current && current.backdropClose) resolveWith(current.dismissValue);
+    });
+    document.addEventListener('keydown', function(e){
+      if(!current) return;
+      if(e.key === 'Escape'){ e.preventDefault(); resolveWith(current.dismissValue); }
+    });
+    document.body.appendChild(overlay);
+  }
+  function render(opts){
+    box.innerHTML = '';
+    var ttl = document.createElement('div'); ttl.className = 'modal-title'; ttl.textContent = opts.title || '';
+    var msg = document.createElement('div'); msg.className = 'modal-msg'; msg.textContent = opts.message || '';
+    var acts = document.createElement('div'); acts.className = 'modal-actions';
+    if(opts.title) box.appendChild(ttl);
+    if(opts.message) box.appendChild(msg);
+    var focusBtn = null;
+    (opts.buttons||[]).forEach(function(b){
+      var el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'modal-btn' + (b.kind ? ' ' + b.kind : '');
+      el.textContent = b.label;
+      el.addEventListener('click', function(){ resolveWith(b.value); });
+      acts.appendChild(el);
+      if(b.kind === 'primary' && !focusBtn) focusBtn = el;
+    });
+    if(!focusBtn) focusBtn = acts.querySelector('.modal-btn');
+    box.appendChild(acts);
+    overlay.classList.add('open');
+    document.body.classList.add('modal-open');
+    if(focusBtn){ try{ focusBtn.focus(); }catch(e){} }
+  }
+  function resolveWith(value){
+    if(!current) return;
+    var res = current.resolve;
+    current = null;
+    overlay.classList.remove('open');
+    document.body.classList.remove('modal-open');
+    try{ res(value); }catch(e){}
+    if(queue.length){ var next = queue.shift(); start(next); }
+  }
+  function start(item){ current = item; build(); render(item.opts); }
+  function open(opts){
+    return new Promise(function(resolve){
+      // dismissValue por defecto: primer botón no-destructivo, o el primero.
+      var dv = opts.dismissValue;
+      if(typeof dv === 'undefined'){
+        var safe = (opts.buttons||[]).filter(function(b){ return b.kind !== 'danger'; })[0];
+        dv = safe ? safe.value : ((opts.buttons||[])[0] || {}).value;
+      }
+      var item = { opts: opts, resolve: resolve, backdropClose: !!opts.backdropClose, dismissValue: dv };
+      if(current){ queue.push(item); } else { start(item); }
+    });
+  }
+  window.appModal = {
+    confirm: function(opts){ return open(opts); },
+    alert: function(opts){
+      return open({ title: opts.title, message: opts.message,
+        buttons: [{ label: (opts.button || 'Entendido'), value: true, kind: 'primary' }],
+        backdropClose: true });
+    }
+  };
+})();
+</script>
 <div id="login-overlay">
   <form class="login-card" id="login-form" autocomplete="off" data-form-type="other" novalidate>
     <h1>HT Iryo</h1>
@@ -1000,7 +1102,7 @@
       } else {
         msg='Abre el menú del navegador (⋮) y selecciona "Instalar aplicación" o "Añadir a pantalla de inicio".';
       }
-      alert(msg);
+      window.appModal.alert({ title:'Instalar app', message: msg, button:'Entendido' });
     }
   });
   if(closeBtn) closeBtn.addEventListener('click', function(){
@@ -3418,12 +3520,10 @@
       if(g[oldKey]){ delete g[oldKey]; localStorage.setItem('ebula_gpslog_v1', JSON.stringify(g)); }
     }catch(e){}
   }
-  // R3: confirma antes de abandonar un servicio que TIENE marcas (cambiar de tren las
-  // borra junto con su log GPS). Devuelve true si se puede continuar: sin marcas, o el
-  // maquinista acepta. En el momento de llamarla, `march` aún es el tren saliente.
-  function confirmLeaveService(oldKey){
-    if(!oldKey || !punches[oldKey] || !Object.keys(punches[oldKey]).length) return true;
-    return confirm('¿Cambiar de tren?\n\nSe borrarán las marcas y el registro GPS del servicio actual (' + ((march&&march.t)||'') + ').\n\n• Aceptar = cambiar (borra las marcas)\n• Cancelar = seguir en este tren');
+  // R3: ¿el servicio identificado por oldKey tiene marcas? (cambiar de tren las borra
+  // junto con su log GPS). El handler 'change' pregunta con appModal si las hay.
+  function serviceHasMarks(oldKey){
+    return !!(oldKey && punches[oldKey] && Object.keys(punches[oldKey]).length);
   }
   function loadPrefs(){try{
     const p=JSON.parse(localStorage.getItem(STORAGE)||'{}');
@@ -3966,14 +4066,23 @@
     }
   }
   function clearAllPunches(){
-    if(!confirm('¿Borrar TODOS los pasos marcados de ESTE tren?')) return;
-    delete punches[tickKey()];
-    delete markSource[tickKey()];
-    provisionalDelay = null;
-    savePunches();
-    saveMarkSource();
-    applyPunches();
-    updatePosition();
+    appModal.confirm({
+      title: 'Borrar punteo',
+      message: '¿Borrar TODOS los pasos marcados de este tren?',
+      buttons: [
+        { label: 'Cancelar', value: false, kind: 'primary' },
+        { label: 'Borrar punteo', value: true, kind: 'danger' }
+      ]
+    }).then(function(ok){
+      if(!ok) return;
+      delete punches[tickKey()];
+      delete markSource[tickKey()];
+      provisionalDelay = null;
+      savePunches();
+      saveMarkSource();
+      applyPunches();
+      updatePosition();
+    });
   }
 
   function goLive(){liveMode=true;updateLive()}
@@ -4339,15 +4448,28 @@
       // de actualizar curIdx para que apunte al tren anterior.
       var oldKey = (march ? tickKey() : null);
       var oldIdx = curIdx;
+      var proceed = function(){
+        curIdx=+e.target.value;
+        renderHeader();
+        if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
+        renderRows(); updatePosition(); savePrefs();
+        if(mapInitialized){ drawRoute(); updateMapTrains(); fitMapToRoute(); }
+        if(window.HTIryo && window.HTIryo._dispatchMarchaChange) window.HTIryo._dispatchMarchaChange();
+      };
       // R3: si el servicio actual tiene marcas, confirmar antes de cambiar (el cambio
       // las borra). Si cancela, se revierte el desplegable y no se borra nada.
-      if(!confirmLeaveService(oldKey)){ e.target.value = oldIdx; return; }
-      curIdx=+e.target.value;
-      renderHeader();
-      if(oldKey && oldKey !== tickKey()) clearOldServiceData(oldKey);
-      renderRows(); updatePosition(); savePrefs();
-      if(mapInitialized){ drawRoute(); updateMapTrains(); fitMapToRoute(); }
-      if(window.HTIryo && window.HTIryo._dispatchMarchaChange) window.HTIryo._dispatchMarchaChange();
+      if(!serviceHasMarks(oldKey)){ proceed(); return; }
+      appModal.confirm({
+        title: 'Cambiar de tren',
+        message: 'Se borrarán las marcas y el registro GPS del servicio actual (' + ((march&&march.t)||'') + ').',
+        buttons: [
+          { label: 'Seguir en este tren', value: false, kind: 'primary' },
+          { label: 'Cambiar de tren', value: true, kind: 'danger' }
+        ]
+      }).then(function(ok){
+        if(ok) proceed();
+        else e.target.value = oldIdx;
+      });
     });
     $('reset-punches').onclick=clearAllPunches;
     $('rows').addEventListener('click',e=>{
@@ -4529,12 +4651,20 @@
       // Si el tickKey actual está entre los servicios con marcas → preguntar.
       var curKey = (march ? tickKey() : null);
       if(!curKey || !p[curKey] || !Object.keys(p[curKey]).length) return;
-      var ok = confirm('⚠ Servicio anterior en curso\n\nHay marcas guardadas del tren ' + (march.t||'') + ' (' + (march.o||'') + ' → ' + (march.d||'') + ').\n\n¿Continuar con ese servicio?\n\n• Aceptar = continuar (mantiene marcas)\n• Cancelar = empezar de nuevo (borra marcas y log GPS)');
-      if(!ok){
-        clearOldServiceData(curKey);
-        applyPunches();
-        updatePosition();
-      }
+      appModal.confirm({
+        title: '⚠ Servicio anterior en curso',
+        message: 'Hay marcas guardadas del tren ' + (march.t||'') + ' (' + (march.o||'') + ' → ' + (march.d||'') + ').\n\n¿Continuar con ese servicio o empezar de nuevo?',
+        buttons: [
+          { label: 'Continuar servicio', value: true, kind: 'primary' },
+          { label: 'Empezar de nuevo', value: false, kind: 'danger' }
+        ]
+      }).then(function(ok){
+        if(!ok){
+          clearOldServiceData(curKey);
+          applyPunches();
+          updatePosition();
+        }
+      });
     }catch(e){}
   }, 1200);
   (function bindTrackToggle(){
@@ -4934,18 +5064,27 @@ async function handleLTVUpload(file){
 }
 
 function clearLTV(){
-  if(!confirm('¿Eliminar todas las limitaciones cargadas?')) return;
-  LTV_LIST = [];
-  try{ localStorage.removeItem(LTV_KEY); }catch(e){}
-  const status = $('dhltv-status');
-  if(status) status.textContent = 'Sin documento cargado';
-  // Limpiar el input para permitir re-subir cualquier PDF (incluso el mismo
-  // que estuvo cargado antes). Sin esta línea, el navegador considera el
-  // valor del input igual al de antes y no dispara el evento change.
-  const fi = $('dhltv-file');
-  if(fi) fi.value = '';
-  renderLTVList();
-  if(march) renderRows();
+  appModal.confirm({
+    title: 'Eliminar limitaciones',
+    message: '¿Eliminar todas las limitaciones cargadas?',
+    buttons: [
+      { label: 'Cancelar', value: false, kind: 'primary' },
+      { label: 'Eliminar', value: true, kind: 'danger' }
+    ]
+  }).then(function(ok){
+    if(!ok) return;
+    LTV_LIST = [];
+    try{ localStorage.removeItem(LTV_KEY); }catch(e){}
+    const status = $('dhltv-status');
+    if(status) status.textContent = 'Sin documento cargado';
+    // Limpiar el input para permitir re-subir cualquier PDF (incluso el mismo
+    // que estuvo cargado antes). Sin esta línea, el navegador considera el
+    // valor del input igual al de antes y no dispara el evento change.
+    const fi = $('dhltv-file');
+    if(fi) fi.value = '';
+    renderLTVList();
+    if(march) renderRows();
+  });
 }
 
 // Bind DHLTV controls (called once on init)
