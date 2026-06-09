@@ -4889,19 +4889,17 @@
       };
     }
   })();
-  // Mostrar la versión del Service Worker bajo "Web no oficial" en la portada.
+  // Mostrar dos líneas de versión bajo "Web no oficial" en la portada:
+  //   1) Versión del repo ORIGINAL (la última portada desde deiividmz/ht-iryo).
+  //   2) Versión de la parte de LOCALIZACIÓN GPS de esta rama.
+  // Ambas son constantes declaradas: se actualizan a mano al portar (la 1ª)
+  // o al iterar sobre el módulo GPS (la 2ª).
   (function showSwVersion(){
     const el=$('sw-version'); if(!el) return;
-    const FALLBACK='ebula-v22.loc';
-    const set=v=>{ el.textContent = v || FALLBACK; };
-    if(window.caches && caches.keys){
-      caches.keys().then(keys=>{
-        // El sufijo ".loc" marca esta rama con localización GPS (vs. la original).
-        const k=keys.filter(x=>/^ebula-v\d+(\.loc)?$/.test(x))
-                    .sort((a,b)=>parseInt(a.slice(7))-parseInt(b.slice(7))).pop();
-        set(k||FALLBACK);
-      }).catch(()=>set(FALLBACK));
-    } else set(FALLBACK);
+    const ORIGINAL_VER = 'ebula-v57';
+    const LOC_VER      = 'loc.-V08';
+    el.innerHTML = '<span class="ver-orig">' + ORIGINAL_VER + '</span>' +
+                   '<br><span class="ver-loc">' + LOC_VER + '</span>';
   })();
   // Detectar pestaña activa inicial y marcar body
   const initialActiveTab = document.querySelector('.tab.active');
