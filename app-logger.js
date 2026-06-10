@@ -58,15 +58,20 @@
   window.AppLogger = AppLogger;
 
   // ---- Entrada inicial de sesión ------------------------------------------------
-  appendEntry('info', 'sesion', 'inicio', {
-    sessionId: sessionId,
-    swVersion: swVersion,
-    ua: navigator.userAgent,
-    platform: navigator.platform,
-    language: navigator.language,
-    online: navigator.onLine,
-    screen: { w: (screen && screen.width)||null, h: (screen && screen.height)||null, dpr: window.devicePixelRatio||null }
-  });
+  function emitSessionEntry(extra){
+    var data = {
+      sessionId: sessionId,
+      swVersion: swVersion,
+      ua: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      online: navigator.onLine,
+      screen: { w: (screen && screen.width)||null, h: (screen && screen.height)||null, dpr: window.devicePixelRatio||null }
+    };
+    if(extra) for(var k in extra) data[k] = extra[k];
+    appendEntry('info', 'sesion', 'inicio', data);
+  }
+  emitSessionEntry();
 
   // ---- Errores JS y promesas no manejadas ---------------------------------------
   var prevOnError = window.onerror;
@@ -320,11 +325,19 @@
         if(!api || typeof api.isTracking !== 'function') return;
         var t = !!api.isTracking();
         if(t !== last){
-          if(last !== null){
-            appendEntry('info', 'gps', t ? 'tracking_start' : 'tracking_stop', { service: serviceInfo() });
-          } else if(t){
-            // Primer chequeo y ya estaba activo (carga con tracking ya iniciado)
-            appendEntry('info', 'gps', 'tracking_start', { service: serviceInfo(), nota: 'detectado_en_arranque' });
+          if(t){
+            // Nuevo servicio: borrar log previo (1 servicio = 1 log).
+            // Rota sessionId, reemite entrada de sesión, marca tracking_start.
+            var prevSessionId = sessionId;
+            try { localStorage.removeItem(LOG_KEY); } catch(e){}
+            sessionId = randId();
+            emitSessionEntry({ reset_motivo: 'tracking_start', prevSessionId: prevSessionId });
+            appendEntry('info', 'gps', 'tracking_start', {
+              service: serviceInfo(),
+              nota: (last === null) ? 'detectado_en_arranque' : undefined
+            });
+          } else if(last !== null){
+            appendEntry('info', 'gps', 'tracking_stop', { service: serviceInfo() });
           }
           last = t;
         }
