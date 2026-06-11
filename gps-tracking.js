@@ -24,10 +24,18 @@
   var ARM_LEAD      = 3;      // minutos antes de la salida en que aparece el aviso de arranque
 
   // ---- Parámetros CPA (Bloque 2) ----
-  var CPA_HISTORY_MAX = 4;            // lecturas guardadas para detectar mínimo
+  var CPA_HISTORY_MAX = 6;            // lecturas guardadas para detectar mínimo (6 para que el mínimo
+                                       // sobreviva varias lecturas en aproximaciones lentas)
   var CPA_STALE_MS    = 5 * 60 * 1000; // > 5 min sin lectura → historial inservible (background largo)
   var CPA_NEAR_M      = 100;          // mitigación B: una sola lectura tan cerca → marca con ella
   var CPA_GAP_MS      = 30 * 1000;     // mitigación A: hueco entre 2 lecturas que supera 30 s → interpolar
+  var CPA_CONFIRM_MAX_M = 1000;        // puerta de distancia: el mínimo debe estar a < 1 km de la estación
+                                       // para confirmar paso. Evita falsos CPA por jitter GPS lejos de la
+                                       // estación (p. ej. tren casi parado a 3 km con ±30 m de ruido).
+  var CPA_GAP_MAX_M     = 3000;        // mitigación A (hueco/túnel): la lectura más cercana puede estar
+                                       // hasta a 3 km (túneles largos); la interpolación sigue siendo válida.
+  var CPA_RISE_MIN_M    = 50;          // la subida sobre el mínimo debe superar max(50 m, accuracy) para
+                                       // descartar que sea ruido de la propia lectura.
 
   // ---- Parámetros sondeo adaptativo (Bloque 1) ----
   var POLL_MIN_MS       = 2000;     // sondeo no baja de 2 s (acercamiento final)
@@ -39,7 +47,14 @@
   var STOP_SPEED_MAX_MS         = 0.83;        // ≈ 3 km/h: por debajo cuenta como "lectura lenta"
   var STOP_CONFIRM_MIN_MS       = 90 * 1000;   // 90 s con lecturas lentas → confirma PARADO
   var STOP_CONFIRM_MIN_READINGS = 3;           // y al menos 3 lecturas en ese intervalo
+  var STOP_BUFFER_MAX           = 10;          // FIFO de lecturas lentas. BUG-FIX: antes se capaba a 3,
+                                               // pero 3 lecturas a cadencia 30 s abarcan solo 60 s y la
+                                               // condición de 90 s no se cumplía NUNCA (Bloque 4 muerto).
   var STOP_EXIT_DIST_M          = 50;          // movimiento > 50 m desde stoppedAtLat/Lng → arranque
+  var STOP_COARSE_DIST_M        = 30;          // respaldo coarse: lecturas a < 30 m entre sí = quieto
+  var STOP_COARSE_MAX_ACC_M     = 500;         // respaldo coarse: accuracy peor → no evaluar quietud
+  var POLL_INFLIGHT_MAX_MS      = 20000;       // watchdog: cerrojo en vuelo > 20 s → liberarlo (promesa
+                                               // que nunca resuelve tras background en algunos Android)
 
   // ---- Parámetros antenas + verif satelital en PARADO (Bloque 4A) ----
   var SAT_VERIFY_INTERVAL_MS    = 180 * 1000;  // 3 min: cada cuánto comprobar con satélite durante PARADO
@@ -71,6 +86,9 @@
   var lastFineReading = null;   // { ts, distM, speedMs } de la última lectura fine — usado por schedulePoll
   var ltvWait = false;          // primera lectura de la ventana mostró > 5 km → mitigación DHLTV
   var pollInFlight = false;     // cerrojo: hay un getCurrentPosition de pollTick en vuelo (anti-solape)
+  var pollInFlightSince = 0;    // ms del lanzamiento — watchdog contra promesas que nunca resuelven
+  var pollSeq = 0;              // token de secuencia: una resolución zombi (superada por el watchdog)
+                                // se descarta comparando su token con el actual
 
   // ---- Estado detector de parado (Bloque 4) ----
   var isStopped       = false;  // PARADO confirmado (3 lect lentas en 90 s) — bloquea estimateMark/catchUp
@@ -78,12 +96,15 @@
   var stoppedAtIdx    = -1;     // idx de la estación destino al entrar (para logEvent y status)
   var stoppedAtLat    = 0;      // posición de referencia para detectar movimiento de salida
   var stoppedAtLng    = 0;
-  var slowReadings    = [];     // FIFO últimas STOP_CONFIRM_MIN_READINGS lecturas lentas para promoción
+  var slowReadings    = [];     // FIFO lecturas lentas (fine) para promoción a PARADO (cap STOP_BUFFER_MAX)
+  var coarseStill     = [];     // respaldo del plan: lecturas coarse consecutivas a < 30 m entre sí
+                                // (zonas sin GPS satelital, donde el criterio fine queda ciego)
 
   // ---- Estado antenas + verif satelital (Bloque 4A) ----
   var watchId            = null; // handle del watchPosition (compartido 4A/4B, sin solapamiento)
   var satCheckTimer      = null; // setTimeout id de la próxima verif satelital
   var satCheckInFlight   = false;// cerrojo: hay un getCurrentPosition de verif en vuelo
+  var satCheckInFlightSince = 0; // watchdog del cerrojo de verif (mismo riesgo de promesa colgada)
   var antennaDriftCount  = 0;    // contador anti-jitter de callbacks de antena
 
   // ---- Estado arranque inteligente (Bloque 4B) ----
@@ -282,40 +303,75 @@
     // demasiado vieja para ser una "anterior" válida de un mínimo.
     var last = cpaHistory[cpaHistory.length - 1];
     if(last && (nowMs - last.ts) > CPA_STALE_MS) cpaHistory = [];
-    cpaHistory.push({ ts: nowMs, distM: distM, lat: pos.lat, lng: pos.lng, speedMs: pos.speed });
+    cpaHistory.push({ ts: nowMs, distM: distM, lat: pos.lat, lng: pos.lng,
+                      speedMs: pos.speed, accM: pos.accuracy });
     if(cpaHistory.length > CPA_HISTORY_MAX) cpaHistory.shift();
   }
 
   // Examina el historial y decide si la estación destino ya quedó atrás.
   // Devuelve { passed, atMs, via } donde:
-  //  - 'cpa'      = 3 lecturas, el penúltimo es mínimo local → paso confirmado.
-  //  - 'cpa-gap'  = 2 lecturas con hueco > 30 s, distancia subió, ambas fine →
-  //                 interpolación ponderada (mitigación A para túnel/background).
+  //  - 'cpa'      = mínimo local confirmado en el historial → paso confirmado.
+  //  - 'cpa-gap'  = hueco > 30 s rodeando al mínimo (túnel/background) →
+  //                 interpolación ponderada (mitigación A).
   //  - 'cpa-near' = 1 sola lectura con dist < 100 m → marca con ella (mitigación B).
+  //
+  // BUG-FIX respecto a la versión anterior (que solo miraba las 3 últimas entradas):
+  //  1. El mínimo se busca en TODO el historial → la mitigación A funciona también
+  //     cuando hay lecturas de aproximación previas al túnel (el caso real del
+  //     escenario B: n≥3 con hueco). Antes solo se interpolaba con exactamente 2
+  //     entradas y el túnel con historial previo marcaba con p2.ts (~800 m de error).
+  //  2. Puerta de distancia (CPA_CONFIRM_MAX_M): un mínimo a 3 km de la estación no
+  //     confirma paso. Evita falsos positivos por jitter GPS con el tren casi parado
+  //     dentro de la ventana (3005 → 2998 → 3010 m habría disparado antes).
+  //  3. Puerta de ruido (CPA_RISE_MIN_M / accuracy): la subida tras el mínimo debe
+  //     superar el ruido de la lectura. En aproximaciones lentas el mínimo se
+  //     confirma unas lecturas más tarde, pero atMs sigue siendo el del mínimo
+  //     real, así que la precisión de la marca no se degrada.
   function cpaDetectPass(){
     var n = cpaHistory.length;
+    if(n === 0) return { passed: false };
     if(n === 1){
       if(cpaHistory[0].distM < CPA_NEAR_M){
         return { passed: true, atMs: cpaHistory[0].ts, via: 'cpa-near' };
       }
+      return { passed: false };
     }
     if(n === 2){
       var a = cpaHistory[0], b = cpaHistory[1];
-      if((b.ts - a.ts) > CPA_GAP_MS && b.distM > a.distM &&
+      if((b.ts - a.ts) > CPA_GAP_MS && b.distM > a.distM && a.distM < CPA_GAP_MAX_M &&
          a.speedMs != null && b.speedMs != null){
         // Ponderación por distancia inversa: el mínimo cae más cerca de la lectura
         // que tenía menor distancia. atMs ∈ [a.ts, b.ts].
-        var atMs = (a.ts * b.distM + b.ts * a.distM) / (a.distM + b.distM);
-        return { passed: true, atMs: atMs, via: 'cpa-gap' };
+        var atMs2 = (a.ts * b.distM + b.ts * a.distM) / (a.distM + b.distM);
+        return { passed: true, atMs: atMs2, via: 'cpa-gap' };
       }
+      return { passed: false };
     }
-    if(n >= 3){
-      var p1 = cpaHistory[n-3], p2 = cpaHistory[n-2], p3 = cpaHistory[n-1];
-      if(p3.distM > p2.distM && p2.distM <= p1.distM){
-        return { passed: true, atMs: p2.ts, via: 'cpa' };
-      }
+    // n >= 3: localizar el mínimo de distancia en todo el historial.
+    var minI = 0;
+    for(var i = 1; i < n; i++){
+      if(cpaHistory[i].distM < cpaHistory[minI].distM) minI = i;
     }
-    return { passed: false };
+    if(minI === n - 1) return { passed: false };   // el mínimo es la última lectura → aún acercándose
+    var minE  = cpaHistory[minI];
+    var after = cpaHistory[minI + 1];
+    var lastE = cpaHistory[n - 1];
+    // ¿Hueco grande justo tras el mínimo? (túnel en boca de estación con historial previo)
+    var bigGap  = (after.ts - minE.ts) > CPA_GAP_MS;
+    var maxDist = bigGap ? CPA_GAP_MAX_M : CPA_CONFIRM_MAX_M;
+    if(minE.distM >= maxDist) return { passed: false };          // puerta de distancia
+    // Puerta de ruido: solo para el mínimo "normal" (lecturas densas). Con hueco
+    // grande basta subida estricta — es el criterio original de la mitigación A:
+    // tras > 30 s a velocidad de línea el tren ha recorrido km, y el jitter no
+    // puede fingir esa subida; exigir 50 m bloquearía el caso simétrico del túnel
+    // (800 m antes / 800 m después) y la marca caería a 'est' sin necesidad.
+    var noise = bigGap ? 0 : Math.max(CPA_RISE_MIN_M, lastE.accM || 0);
+    if(lastE.distM - minE.distM <= noise) return { passed: false }; // aún no confirmado
+    if(bigGap){
+      var atMs3 = (minE.ts * after.distM + after.ts * minE.distM) / (minE.distM + after.distM);
+      return { passed: true, atMs: atMs3, via: 'cpa-gap' };
+    }
+    return { passed: true, atMs: minE.ts, via: 'cpa' };
   }
 
   // Convierte un timestamp ms a HH:MM (hora local del navegador).
@@ -338,6 +394,7 @@
     stoppedAtLat  = lat;
     stoppedAtLng  = lng;
     slowReadings  = [];
+    coarseStill   = [];
     antennaDriftCount = 0;
     logEvent('parado', 'tren detenido cerca de ' + stName(gpsNextIdx));
     setStatus('Tren detenido — esperando arranque (cerca de ' + stName(gpsNextIdx) + ')', 'warn');
@@ -364,6 +421,7 @@
     stoppedSince = 0;
     stoppedAtIdx = -1;
     slowReadings = [];
+    coarseStill  = [];
     // Reanudar el ciclo normal de sondeo. El próximo pollTick reevalúa todo.
     if(tracking) schedulePoll();
   }
@@ -464,8 +522,16 @@
     // D2: cerrojo. El visibilitychange puede dispararse 2× seguidas en algunos
     // móviles; sin esto tendríamos varios getCurrentPosition en vuelo, cada uno
     // reprogramando el timer al resolver (fuga de timers).
-    if(!isStopped || satCheckInFlight) return;
+    if(!isStopped) return;
+    if(satCheckInFlight){
+      // Watchdog: si la promesa lleva demasiado en vuelo (no resolvió ni rechazó,
+      // pasa en algunos Android tras background), liberar el cerrojo para que la
+      // verificación periódica no muera para siempre.
+      if(Date.now() - satCheckInFlightSince <= POLL_INFLIGHT_MAX_MS) return;
+      satCheckInFlight = false;
+    }
     satCheckInFlight = true;
+    satCheckInFlightSince = Date.now();
     GeoSource.getCurrent().then(function(pos){
       satCheckInFlight = false;
       if(!isStopped) return;
@@ -485,6 +551,7 @@
   // Llamada en cada pollTick con lectura fine válida. Decide si promover o salir.
   function updateStoppedState(pos, nowMs){
     if(!isFineFix(pos)) return;   // sin speed fiable no se puede evaluar
+    coarseStill = [];             // hay GPS satelital: el criterio fine manda, el respaldo coarse se anula
     if(isStopped){
       // ¿Hay arranque? velocidad clara o desplazamiento real.
       var dFromStop = haversineMeters(pos.lat, pos.lng, stoppedAtLat, stoppedAtLng);
@@ -497,9 +564,35 @@
     var slow = (pos.speed != null && pos.speed <= STOP_SPEED_MAX_MS);
     if(!slow){ slowReadings = []; return; }
     slowReadings.push({ ts: nowMs, lat: pos.lat, lng: pos.lng, speedMs: pos.speed });
-    if(slowReadings.length > STOP_CONFIRM_MIN_READINGS) slowReadings.shift();
+    // BUG-FIX: el cap era STOP_CONFIRM_MIN_READINGS (3). Con cadencia de 30 s,
+    // 3 lecturas abarcan 60 s y la condición de 90 s no se cumplía NUNCA: el
+    // shift descartaba la lectura antigua justo antes de alcanzar el umbral.
+    // El Bloque 4 entero era código muerto. Cap amplio: la ventana temporal
+    // la decide la condición, no el tamaño del buffer.
+    if(slowReadings.length > STOP_BUFFER_MAX) slowReadings.shift();
     if(slowReadings.length >= STOP_CONFIRM_MIN_READINGS &&
        (nowMs - slowReadings[0].ts) >= STOP_CONFIRM_MIN_MS){
+      enterStoppedMode(pos.lat, pos.lng, nowMs);
+    }
+  }
+
+  // Respaldo del plan (Bloque 4): confirmación de PARADO con lecturas coarse
+  // (triangulación celular, sin speed) cuando no hay GPS satelital. Criterio:
+  // STOP_CONFIRM_MIN_READINGS lecturas consecutivas a < STOP_COARSE_DIST_M unas
+  // de otras durante al menos STOP_CONFIRM_MIN_MS. Antes este criterio del plan
+  // no estaba implementado: en zona sin satélite — justo donde el estado PARADO
+  // más importa — el detector quedaba ciego y estimateMark podía marcar en falso.
+  function updateStoppedStateCoarse(pos, nowMs){
+    if(isStopped) return;   // la salida durante PARADO la gestionan antenas + verif satelital
+    if(pos.accuracy == null || pos.accuracy > STOP_COARSE_MAX_ACC_M) return;
+    var last = coarseStill[coarseStill.length - 1];
+    if(last && haversineMeters(pos.lat, pos.lng, last.lat, last.lng) > STOP_COARSE_DIST_M){
+      coarseStill = [];     // se movió respecto a la anterior → la racha de quietud se rompe
+    }
+    coarseStill.push({ ts: nowMs, lat: pos.lat, lng: pos.lng });
+    if(coarseStill.length > STOP_BUFFER_MAX) coarseStill.shift();
+    if(coarseStill.length >= STOP_CONFIRM_MIN_READINGS &&
+       (nowMs - coarseStill[0].ts) >= STOP_CONFIRM_MIN_MS){
       enterStoppedMode(pos.lat, pos.lng, nowMs);
     }
   }
@@ -527,6 +620,8 @@
     if(!skipped) setStatus('✓ ' + stName(idx) + ' ' + hhmm + ' (GPS)', 'ok');
     windowOpen = false;
     cpaResetHistory(-1);   // el historial pertenecía a la estación recién marcada
+    lastFineReading = null; // su distM apuntaba a la estación marcada; reusarlo haría
+                            // que schedulePoll sondease a 2 s hacia una estación lejana
     recomputeNext();
   }
 
@@ -546,6 +641,7 @@
     setStatus('~ ' + stName(idx) + ' ' + hhmm + ' (estimada, sin GPS)', 'warn');
     windowOpen = false;
     gpsFailCount = 0;
+    lastFineReading = null;  // mismo motivo que en autoMark: distM obsoleto
     recomputeNext();
   }
 
@@ -571,7 +667,15 @@
     // y mezclaba la distancia hacia la estación vieja en el historial CPA de la
     // nueva (marca falsa o timestamp erróneo). El cerrojo lo impide; el reloj
     // sigue programando ticks y el siguiente sondea cuando este libere.
-    if(pollInFlight) return;
+    if(pollInFlight){
+      // Watchdog: si la promesa en vuelo lleva > POLL_INFLIGHT_MAX_MS sin resolver
+      // ni rechazar (pasa en algunos Android al volver de background, pese al
+      // timeout:10000), liberar el cerrojo: sin esto el tracking moriría en
+      // silencio para siempre. Si la promesa zombi resuelve más tarde, su token
+      // de secuencia ya no coincidirá y se descartará.
+      if(Date.now() - pollInFlightSince <= POLL_INFLIGHT_MAX_MS) return;
+      pollInFlight = false;
+    }
     recomputeNext();
     if(gpsNextIdx < 0){ setStatus('Marcha completada', 'ok'); return; }
 
@@ -585,10 +689,21 @@
     }
 
     // Ventana abierta → consultar el GPS
+    // BUG-FIX (carrera con marca manual): la lectura tarda hasta 10 s. Si durante
+    // el vuelo el maquinista marca a mano, logManualMark avanza gpsNextIdx y este
+    // closure quedaría con `name`/`eff` de la estación ANTIGUA: la distancia hacia
+    // ella se inyectaría como primera entrada del historial CPA de la NUEVA (si el
+    // tren pasaba a < 100 m de la vieja, cpa-near marcaría la nueva en falso).
+    // Se captura el idx objetivo y se descarta la resolución si cambió.
+    var targetIdx = gpsNextIdx;
+    var mySeq = ++pollSeq;
     pollInFlight = true;
+    pollInFlightSince = Date.now();
     GeoSource.getCurrent().then(function(pos){
+      if(mySeq !== pollSeq) return;       // resolución zombi superada por el watchdog
       pollInFlight = false;
       if(!tracking) return;
+      if(gpsNextIdx !== targetIdx) return; // el objetivo cambió durante el vuelo (marca manual)
       // Bloque 3: filtros de calidad. Tres motivos para rechazar una lectura
       // como "no marcable" (cuentan como fallo de GPS, aceleran sondeo y, si
       // persisten hasta el GIVEUP, terminan en estimateMark con 'est'):
@@ -614,6 +729,15 @@
       }
       if(poorReading){
         gpsFailCount++;
+        // Bloque 4 (respaldo del plan): una lectura coarse con accuracy razonable
+        // sirve para evaluar quietud por proximidad entre lecturas consecutivas,
+        // aunque no sirva para marcar. Sin esto, en zona sin satélite el detector
+        // de parado quedaba ciego — justo donde más falta hace.
+        if(!isFineFix(pos)) updateStoppedStateCoarse(pos, Date.now());
+        if(isStopped){
+          setStatus('Tren detenido (confirmado por antenas) — esperando arranque cerca de ' + name, 'warn');
+          return;
+        }
         var effImp = effTime(gpsNextIdx);
         // Bloque 1+4: si ltvWait o isStopped están activos, NO marcar como
         // estimada aunque venza el giveup — el tren está confirmado lejos o
@@ -683,25 +807,46 @@
         logEvent('cpa', name + ' · ' + cpa.via + ' · dist actual ' + Math.round(distM) + 'm');
         autoMark(gpsNextIdx, false, cpa.atMs);
       } else if(pr.passedOrigIdx === gpsNextIdx){
-        // La geometría dice que pasó pero el historial CPA no lo confirma
-        // (cold start dentro de la estación, primera lectura ya past): marcar
-        // con hora actual — es la mejor disponible.
-        autoMark(gpsNextIdx, false);
+        // La geometría (snap.t > 0.6, el criterio antiguo) dice que pasó. Pero si
+        // el historial CPA muestra la distancia AÚN BAJANDO, físicamente no hemos
+        // llegado al punto más cercano: marcar ahora reintroduciría el error de
+        // 1–2 km que este plan elimina (ocurre cuando la coordenada de la estación
+        // no cae sobre el último vértice de la polyline). Se difiere al CPA, que
+        // confirmará el mínimo en las próximas lecturas; si las lecturas mueren
+        // (túnel), lo cubren la mitigación de hueco o el giveup.
+        var nH = cpaHistory.length;
+        var stillApproaching = nH >= 2 &&
+          cpaHistory[nH-1].distM < cpaHistory[nH-2].distM;
+        if(stillApproaching){
+          logEvent('geo_defer', name + ' — geometría indica paso pero la distancia aún baja (' +
+                   Math.round(distM) + ' m); esperando mínimo CPA', 'geodefer' + gpsNextIdx);
+          setStatus('Llegando a ' + name + ' · ' + Math.round(distM) + ' m', 'ok');
+        } else {
+          // Sin historial aprovechable (cold start dentro de la estación, primera
+          // lectura ya past): marcar con hora actual — es la mejor disponible.
+          autoMark(gpsNextIdx, false);
+        }
       } else {
-        if(nowM > eff + 0.5){
-          var prov = currentDelta() + (nowM - eff);
+        // `eff`/`nowM` se calcularon ANTES de la llamada GPS (hasta 10 s antes);
+        // recalcular aquí para que el retraso provisional no arrastre ese desfase.
+        var effNow  = effTime(gpsNextIdx);
+        var nowMNow = normNow(effNow);
+        if(nowMNow > effNow + 0.5){
+          var prov = currentDelta() + (nowMNow - effNow);
           API.setProvisionalDelay(prov);
           logEvent('retraso', '+' + Math.round(prov) + ' min provisional hacia ' + name, 'retraso' + Math.round(prov));
           setStatus('Retraso creciendo: +' + fmtDur(prov) + ' · sin pasar aún ' + name, 'warn');
         } else {
           API.setProvisionalDelay(null);
           var distInfo = distM != null ? ' · ' + Math.round(distM) + 'm' : '';
-          setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(eff) + ')' + distInfo);
+          setStatus('En ruta hacia ' + name + ' (previsto ' + fmtHM(effNow) + ')' + distInfo);
         }
       }
     }).catch(function(err){
+      if(mySeq !== pollSeq) return;        // rechazo zombi superado por el watchdog
       pollInFlight = false;
       if(!tracking) return;
+      if(gpsNextIdx !== targetIdx) return; // el objetivo cambió durante el vuelo (marca manual)
       gpsFailCount++;
       // Margen de gracia (N2): el 1.er fallo mantiene la posición (el tren puede
       // seguir parado, o ser un parpadeo aislado del GPS). A partir del 2.º fallo
@@ -768,6 +913,10 @@
   //                                    con sondeo fijo de 30 s. Precisión clave.
   //   - Sin datos para adaptar     → 30 s (fallback prudente)
   function schedulePoll(){
+    // Idempotencia: limpiar cualquier timer pendiente antes de programar. Sin
+    // esto, una llamada doble (p. ej. visibilitychange + cadena viva) crearía
+    // DOS cadenas de sondeo paralelas: doble batería y dobles lecturas.
+    if(pollTimer){ clearTimeout(pollTimer); pollTimer = null; }
     // Bloque 4A: durante PARADO el ciclo queda en pausa (antenas + verif
     // satelital cada 3 min se encargan). Bloque 4B: durante el diferido del
     // cold start tampoco — el setTimeout coldStartTimer es el único disparador.
@@ -842,6 +991,8 @@
     stoppedSince = 0;
     stoppedAtIdx = -1;
     slowReadings = [];
+    coarseStill  = [];
+    pollSeq++;               // invalida cualquier lectura en vuelo
     if(watchId != null){ GeoSource.watchStop(watchId); watchId = null; }
     if(satCheckTimer){ clearTimeout(satCheckTimer); satCheckTimer = null; }
     if(coldStartTimer){ clearTimeout(coldStartTimer); coldStartTimer = null; }
@@ -1000,9 +1151,13 @@
           // Reconciliación AUTOMÁTICA: sin depender de que el maquinista toque
           // nada. Primero rellena las estaciones cuya ventana venció mientras
           // la app estuvo suspendida; luego consulta el GPS para la estación
-          // actual.
+          // actual y REPROGRAMA la cadena de sondeo: algunos sistemas matan el
+          // setTimeout pendiente en background y, sin esto, el tracking quedaría
+          // sin ticks futuros. schedulePoll es idempotente (limpia el timer
+          // viejo si seguía vivo), así que no hay riesgo de cadena doble.
           catchUp();
           pollTick();
+          schedulePoll();
           setStatus('Localización reactivada — posición recuperada', 'ok');
         }
       }
@@ -1020,6 +1175,8 @@
     stoppedSince = 0;
     stoppedAtIdx = -1;
     slowReadings = [];
+    coarseStill  = [];
+    pollSeq++;               // invalida cualquier lectura en vuelo de la marcha anterior
     if(watchId != null){ GeoSource.watchStop(watchId); watchId = null; }
     if(satCheckTimer){ clearTimeout(satCheckTimer); satCheckTimer = null; }
     if(coldStartTimer){ clearTimeout(coldStartTimer); coldStartTimer = null; }
@@ -1061,6 +1218,8 @@
     stoppedSince = 0;
     stoppedAtIdx = -1;
     slowReadings = [];
+    coarseStill  = [];
+    lastFineReading = null;   // su distM apuntaba a la estación recién marcada a mano
     recomputeNext();
     // BUG-FIX: si veníamos de PARADO, enterStoppedMode había cancelado pollTimer
     // y delegado en antenas/sat. Esos ya están cerrados arriba, así que sin esto
