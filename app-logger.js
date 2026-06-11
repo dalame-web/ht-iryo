@@ -13,9 +13,11 @@
 (function(){
   'use strict';
 
-  var LOG_KEY = 'ebula_applog_v1';
+  var LOG_KEY     = 'ebula_applog_v1';
+  var TOSEND_KEY  = 'ebula_applog_tosend_v1';
+  var WEBHOOK_URL = 'https://hook.us2.make.com/ymy82plw4x1qks43kmfvhitkpbhnwrbm';
   var MAX_ENTRIES = 3000;
-  var TRIM_TO = 2400;
+  var TRIM_TO     = 2400;
 
   function nowIso(){ return new Date().toISOString(); }
   function randId(){ return Math.random().toString(16).slice(2,10); }
@@ -42,16 +44,6 @@
 
   var AppLogger = {
     log: appendEntry,
-    export: function(){
-      var arr;
-      try { arr = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch(e){ arr = []; }
-      if(!arr || arr.constructor !== Array) arr = [];
-      var lines = [];
-      for(var i=0; i<arr.length; i++){
-        try { lines.push(JSON.stringify(arr[i])); } catch(e){}
-      }
-      return lines.join('\n');
-    },
     clear: function(){ try { localStorage.removeItem(LOG_KEY); } catch(e){} },
     getSessionId: function(){ return sessionId; }
   };
@@ -112,8 +104,6 @@
   }
 
   // ---- Wrap navigator.geolocation -----------------------------------------------
-  // Captura cada lectura GPS (lat/lng/accuracy completos) y cada error de lectura.
-  // gps-tracking.js usa getCurrentPosition; watchPosition se wrappea por simetría.
   (function(){
     if(!navigator.geolocation) return;
     var geo = navigator.geolocation;
@@ -181,9 +171,6 @@
   })();
 
   // ---- Wrap localStorage.setItem -------------------------------------------------
-  // Filtra estrictamente claves de punteo + fuente de marca. Diff para detectar
-  // alta/baja/reset. Una bandera evita doble-logueo cuando el origen es HTIryo.setMark
-  // (que ya se captura por separado).
   var setMarkInProgress = false;
   (function(){
     var origSet = localStorage.setItem.bind(localStorage);
@@ -237,14 +224,9 @@
   }
 
   // ---- Wrap HTIryo (cuando esté disponible) -------------------------------------
-  // index.html crea window.HTIryo de forma síncrona durante el parseo de su script
-  // principal. Como app-logger.js se carga DESPUÉS de ese script y ANTES de
-  // gps-tracking.js, HTIryo ya existe aquí; los wraps aplican antes de cualquier
-  // uso por gps-tracking.js.
   function wrapHTIryo(){
     var api = H();
     if(!api) return false;
-    // setMark: lo llama gps-tracking.js (autoMark / estimateMark). Capta source.
     if(typeof api.setMark === 'function' && !api.setMark.__alWrapped){
       var origSetMark = api.setMark;
       api.setMark = function(idx, hhmm, source){
@@ -259,7 +241,6 @@
       };
       api.setMark.__alWrapped = true;
     }
-    // setProvisionalDelay: cambios del retraso provisional. Deduplica por valor entero.
     if(typeof api.setProvisionalDelay === 'function' && !api.setProvisionalDelay.__alWrapped){
       var origSPD = api.setProvisionalDelay;
       var lastProv = undefined;
@@ -275,7 +256,6 @@
       };
       api.setProvisionalDelay.__alWrapped = true;
     }
-    // logManualMark: marca manual con GPS activo.
     if(typeof api.logManualMark === 'function' && !api.logManualMark.__alWrapped){
       var origLMM = api.logManualMark;
       api.logManualMark = function(idx){
@@ -286,7 +266,6 @@
       };
       api.logManualMark.__alWrapped = true;
     }
-    // Cambio de marcha
     if(typeof api.onMarchaChange === 'function' && !api.__alMarchaHooked){
       api.onMarchaChange(function(){
         appendEntry('info', 'accion_usuario', 'cambio_marcha', { service: serviceInfo() });
@@ -296,10 +275,6 @@
     return true;
   }
 
-  // Reintenta hasta que TODOS los métodos esperados estén wrappeados.
-  // setMark/setProvisionalDelay existen ya cuando index.html crea HTIryo,
-  // pero logManualMark lo añade gps-tracking.js al final de su IIFE,
-  // así que necesitamos reintentar tras su carga.
   function fullyWrapped(){
     var a = H();
     return !!(a && a.setMark && a.setMark.__alWrapped
@@ -316,18 +291,93 @@
     }, 100);
   }
 
+  // ---- Auto-envío al webhook ---------------------------------------------------
+  function arrToNdjson(arr){
+    var lines = [];
+    for(var i=0; i<arr.length; i++){
+      try { lines.push(JSON.stringify(arr[i])); } catch(e){}
+    }
+    return lines.join('\n');
+  }
+
+  // Copia LOG_KEY → TOSEND_KEY como NDJSON. No sobreescribe si ya hay envío pendiente.
+  function snapshotToSend(){
+    try {
+      if(localStorage.getItem(TOSEND_KEY)) return;
+      var arr;
+      try { arr = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch(e){ arr = []; }
+      if(!arr || !arr.length) return;
+      localStorage.setItem(TOSEND_KEY, arrToNdjson(arr));
+    } catch(e){}
+  }
+
+  function autoSend(){
+    try {
+      var ndjson = localStorage.getItem(TOSEND_KEY);
+      if(!ndjson) return;
+      var lines = ndjson.split('\n').length;
+      fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          log: ndjson,
+          sentAt: new Date().toISOString(),
+          entries: lines
+        })
+      }).then(function(res){
+        if(res.ok){
+          try { localStorage.removeItem(TOSEND_KEY); } catch(e){}
+          appendEntry('info', 'log_send', 'ok', { entries: lines });
+        } else {
+          appendEntry('warn', 'log_send', 'http_error', { status: res.status });
+        }
+      }).catch(function(err){
+        appendEntry('warn', 'log_send', 'fetch_error', {
+          msg: err ? String(err.message || err) : null
+        });
+      });
+    } catch(e){}
+  }
+
   // ---- Polling de isTracking para detectar start/stop ----------------------------
   (function(){
     var last = null;
+    var startupChecked = false;
     setInterval(function(){
       try {
         var api = H();
         if(!api || typeof api.isTracking !== 'function') return;
         var t = !!api.isTracking();
+
+        // Primera vez que HTIryo está disponible: comprueba envíos pendientes.
+        if(!startupChecked){
+          startupChecked = true;
+          if(localStorage.getItem(TOSEND_KEY)){
+            // Envío pendiente de la sesión anterior (e.g. sin red al terminar)
+            autoSend();
+          } else if(!t){
+            // ¿App cerrada antes de que se detectara tracking_stop?
+            // Si el log tiene un tracking_start real, lo rescatamos y enviamos.
+            var arr2;
+            try { arr2 = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch(e){ arr2 = []; }
+            var hadService = false;
+            for(var i=0; i<arr2.length; i++){
+              if(arr2[i] && arr2[i].cat === 'gps' && arr2[i].msg === 'tracking_start'){
+                hadService = true; break;
+              }
+            }
+            if(hadService){
+              appendEntry('info', 'log_send', 'recuperando_servicio_cerrado', {});
+              snapshotToSend();
+              autoSend();
+            }
+          }
+        }
+
         if(t !== last){
           if(t){
-            // Nuevo servicio: borrar log previo (1 servicio = 1 log).
-            // Rota sessionId, reemite entrada de sesión, marca tracking_start.
+            // Antes de limpiar: salva log anterior si contiene un servicio sin enviar.
+            snapshotToSend();
             var prevSessionId = sessionId;
             try { localStorage.removeItem(LOG_KEY); } catch(e){}
             sessionId = randId();
@@ -338,6 +388,8 @@
             });
           } else if(last !== null){
             appendEntry('info', 'gps', 'tracking_stop', { service: serviceInfo() });
+            snapshotToSend();
+            autoSend();
           }
           last = t;
         }
@@ -351,7 +403,10 @@
     try { tracking = !!(H() && H().isTracking && H().isTracking()); } catch(e){}
     appendEntry('info', 'lifecycle', 'visibility', { hidden: document.hidden, tracking: tracking });
   });
-  window.addEventListener('online', function(){ appendEntry('info', 'lifecycle', 'online'); });
+  window.addEventListener('online', function(){
+    appendEntry('info', 'lifecycle', 'online');
+    autoSend(); // reintento si había envío pendiente
+  });
   window.addEventListener('offline', function(){ appendEntry('info', 'lifecycle', 'offline'); });
 
   // ---- Permiso GPS --------------------------------------------------------------
@@ -372,62 +427,4 @@
       }).catch(function(){});
     } catch(e){}
   })();
-
-  // ---- Botón "Exportar log" (creado por JS, sin tocar HTML) ----------------------
-  function installExportButton(){
-    var anchor = document.getElementById('reset-punches');
-    if(!anchor || document.getElementById('export-log')) return;
-    var btn = document.createElement('button');
-    btn.id = 'export-log';
-    btn.type = 'button';
-    btn.className = anchor.className; // hereda estilo (track-btn off)
-    btn.title = 'Exportar log de sesión';
-    btn.textContent = '📋 Exportar log';
-    btn.style.marginLeft = '6px';
-    anchor.insertAdjacentElement('afterend', btn);
-    btn.addEventListener('click', onExportClick);
-  }
-  function onExportClick(){
-    var data = AppLogger.export();
-    var fname = 'htiryo-log-' + new Date().toISOString().replace(/[:.]/g,'-') + '.ndjson';
-    // 1) Web Share API con archivo
-    try {
-      if(navigator.canShare && typeof File !== 'undefined'){
-        var file = new File([data], fname, {type:'application/x-ndjson'});
-        if(navigator.canShare({files:[file]})){
-          navigator.share({files:[file], title:'HT-Iryo log'}).catch(function(){ fallbackClipboard(); });
-          return;
-        }
-      }
-    } catch(e){}
-    fallbackClipboard();
-
-    function fallbackClipboard(){
-      if(navigator.clipboard && navigator.clipboard.writeText){
-        navigator.clipboard.writeText(data).then(function(){
-          try { alert('Log copiado al portapapeles ('+ data.split('\n').length +' entradas)'); } catch(e){}
-        }, function(){ fallbackDownload(); });
-        return;
-      }
-      fallbackDownload();
-    }
-    function fallbackDownload(){
-      try {
-        var blob = new Blob([data], {type:'application/x-ndjson'});
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url; a.download = fname;
-        document.body.appendChild(a); a.click();
-        setTimeout(function(){
-          try { document.body.removeChild(a); } catch(e){}
-          try { URL.revokeObjectURL(url); } catch(e){}
-        }, 200);
-      } catch(e){}
-    }
-  }
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', installExportButton);
-  } else {
-    installExportButton();
-  }
 })();

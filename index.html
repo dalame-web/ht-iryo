@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="HT Iryo">
 <meta name="application-name" content="HT Iryo">
 <meta name="theme-color" content="#e8201c">
-<meta name="ebula-version" content="v32.loc">
+<meta name="ebula-version" content="v36.loc">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
@@ -3784,6 +3784,7 @@
     const tbody = $('rows');
     tbody.innerHTML='';
     injectBoxAnns(march);  // inserta anotaciones de recuadro (TASF/LZB/VÍA/…) una vez por marcha
+    migrateMarkKeys();     // HOR-001: convierte marcas antiguas (por índice) a clave estable
     const vmxSpans = computeSpans(march.s, 'v', true);  // VMáx: une a través de vacías cuando coinciden valores
     vmxOwnerMap = new Array(march.s.length).fill(-1);
     let curVmxOwner = -1;
@@ -4059,6 +4060,74 @@
 
   function tickKey(){return curGrp+'|'+march.t+'|'+march.o+'→'+march.d}
 
+  // ---- HOR-001: clave de marca estable ----
+  // Las marcas se guardaban por índice de fila en march.s. Ese índice depende
+  // del JSON embebido y de las anotaciones inyectadas (injectBoxAnns hace
+  // splice): publicar una versión con una fila o recuadro nuevo a mitad de
+  // servicio desplazaba todas las marcas posteriores al punto de inserción.
+  // La clave estable 'nombre|km' identifica la dependencia aunque su fila
+  // cambie de posición. Si la misma dependencia apareciera dos veces en una
+  // marcha, se desambigua con el ordinal de aparición.
+  function rowMarkKey(idx){
+    const s = march && march.s ? march.s[idx] : null;
+    if(!s) return null;
+    const base = (s.n||'') + '|' + (s.k!=null ? s.k : '');
+    let occ = 0;
+    for(let i=0;i<idx;i++){
+      const r = march.s[i];
+      if(r && ((r.n||'') + '|' + (r.k!=null ? r.k : '')) === base) occ++;
+    }
+    return occ ? base + '|' + occ : base;
+  }
+  function getMarkAt(idx){
+    const nk = rowMarkKey(idx);
+    return nk != null ? (punches[tickKey()]||{})[nk] : undefined;
+  }
+  function getMarkSrcAt(idx){
+    const nk = rowMarkKey(idx);
+    return nk != null ? (markSource[tickKey()]||{})[nk] : undefined;
+  }
+  function setMarkAt(idx, hhmm, src){
+    const nk = rowMarkKey(idx);
+    if(nk == null) return;
+    const key = tickKey();
+    if(!punches[key]) punches[key]={};
+    if(!markSource[key]) markSource[key]={};
+    punches[key][nk] = hhmm;
+    markSource[key][nk] = src;
+  }
+  function clearMarkAt(idx){
+    const nk = rowMarkKey(idx);
+    const key = tickKey();
+    if(nk != null && punches[key] && punches[key][nk] != null){
+      delete punches[key][nk];
+      if(markSource[key]) delete markSource[key][nk];
+      return true;
+    }
+    return false;
+  }
+  // Migración única por servicio: convierte claves antiguas (índices numéricos)
+  // al formato estable usando las filas actuales. Mejor esfuerzo: si la marca
+  // se hizo con una versión de datos anterior Y las filas ya se desplazaron,
+  // la conversión hereda ese desplazamiento (era el defecto original); a partir
+  // de la conversión las marcas quedan inmunes a futuros desplazamientos.
+  function migrateMarkKeys(){
+    const key = tickKey();
+    let changed = false;
+    [punches, markSource].forEach(store=>{
+      const obj = store[key];
+      if(!obj) return;
+      Object.keys(obj).forEach(k=>{
+        if(!/^\d+$/.test(k)) return;
+        const nk = rowMarkKey(+k);
+        if(nk != null && obj[nk] == null) obj[nk] = obj[k];
+        delete obj[k];
+        changed = true;
+      });
+    });
+    if(changed){ savePunches(); saveMarkSource(); }
+  }
+
   function applyPunches(){
     const key = tickKey();
     const trPunches = punches[key]||{};
@@ -4067,10 +4136,11 @@
       if(!td.dataset.idx) return;
       if(td.dataset.noMark) return;
       const idx = +td.dataset.idx;
-      const p = trPunches[idx];
+      const nk = rowMarkKey(idx);          // HOR-001: clave estable, no índice
+      const p = nk != null ? trPunches[nk] : undefined;
       if(p){
         td.classList.add('punched');
-        const src = trSrc[idx];
+        const src = nk != null ? trSrc[nk] : undefined;
         td.classList.toggle('mark-est', src === 'est');
         td.classList.toggle('mark-gps', src === 'gps');
         td.classList.toggle('mark-manual', src === 'manual' || (!src));
@@ -4098,17 +4168,25 @@
   function updatePosition(){
     const t = nowMin();
     const stops = march.s;
-    const key = tickKey();
-    const trPunches = punches[key]||{};
 
-    let lp = -1, delayMin = 0;
-    Object.keys(trPunches).map(Number).forEach(i=>{
-      if(stops[i] && stops[i].tm!=null && i>lp) lp = i;
-    });
-    if(lp>=0){
-      const [h,m] = trPunches[lp].split(':').map(Number);
+    let lp = -1, lpReal = -1, delayMin = 0;
+    // HOR-001: la última fila marcada se busca por clave estable, recorriendo
+    // las filas actuales (antes se mapeaban claves numéricas a índices).
+    for(let i=0;i<stops.length;i++){
+      if(stops[i].tm!=null && getMarkAt(i)!=null){
+        lp = i;
+        if(getMarkSrcAt(i) !== 'est') lpReal = i;  // gps, manual o legado sin fuente
+      }
+    }
+    // HOR-002: la Δ marcha sale de la última marca REAL (gps/manual) — una
+    // 'est' no mide, solo repite el delta con el que se rellenó. Si solo hay
+    // estimadas, se usa la última como último recurso (mismo cálculo que
+    // currentDelta() en gps-tracking.js: ambos deben contar lo mismo).
+    const lpDelta = lpReal >= 0 ? lpReal : lp;
+    if(lpDelta>=0){
+      const [h,m] = String(getMarkAt(lpDelta)).split(':').map(Number);
       let realMin = h*60+m;
-      let diff = realMin - stops[lp].tm;
+      let diff = realMin - stops[lpDelta].tm;
       if(diff<-12*60) diff += 24*60;
       if(diff>12*60) diff -= 24*60;
       delayMin = diff;
@@ -4251,13 +4329,9 @@
 
   // ---- punches ----
   function punchAt(idx){
-    const key = tickKey();
-    if(!punches[key]) punches[key]={};
     const t = liveMode ? nowMin() : manualOffsetMs;
     const h = Math.floor(t/60)%24, m = Math.floor(t%60);
-    punches[key][idx] = pad(h)+':'+pad(m);
-    if(!markSource[key]) markSource[key]={};
-    markSource[key][idx] = 'manual';
+    setMarkAt(idx, pad(h)+':'+pad(m), 'manual');   // HOR-001: clave estable
     provisionalDelay = null;
     savePunches();
     saveMarkSource();
@@ -4274,10 +4348,7 @@
     }
   }
   function clearPunch(idx){
-    const key = tickKey();
-    if(punches[key] && punches[key][idx]!=null){
-      delete punches[key][idx];
-      if(markSource[key]) delete markSource[key][idx];
+    if(clearMarkAt(idx)){                          // HOR-001: clave estable
       provisionalDelay = null;
       savePunches();saveMarkSource();applyPunches();updatePosition();
     }
@@ -4800,14 +4871,12 @@
       forceLiveTime: function(){ if(!liveMode){ goLive(); } },
       refreshPositionBox: refreshPositionBox,
       setProvisionalDelay: function(min){ provisionalDelay = (min == null ? null : min); updatePosition(); },
-      getMark: function(idx){ return (punches[tickKey()]||{})[idx]; },
-      getMarkSource: function(idx){ return (markSource[tickKey()]||{})[idx]; },
+      // HOR-001: la API sigue hablando en índices de march.s (lo que maneja el
+      // módulo GPS), pero el almacenamiento usa la clave estable nombre|km.
+      getMark: function(idx){ return getMarkAt(idx); },
+      getMarkSource: function(idx){ return getMarkSrcAt(idx); },
       setMark: function(idx, hhmm, source){
-        const k = tickKey();
-        if(!punches[k]) punches[k] = {};
-        if(!markSource[k]) markSource[k] = {};
-        punches[k][idx] = hhmm;
-        markSource[k][idx] = source || 'gps';
+        setMarkAt(idx, hhmm, source || 'gps');
         provisionalDelay = null;
         savePunches(); saveMarkSource();
         applyPunches(); updatePosition();
@@ -4921,7 +4990,7 @@
   (function showSwVersion(){
     const el=$('sw-version'); if(!el) return;
     const ORIGINAL_VER = 'ebula-v75';
-    const LOC_VER      = 'loc.-V11';
+    const LOC_VER      = 'loc.-V13';
     el.innerHTML = '<span class="ver-orig">' + ORIGINAL_VER + '</span>' +
                    '<br><span class="ver-loc">' + LOC_VER + '</span>';
   })();
